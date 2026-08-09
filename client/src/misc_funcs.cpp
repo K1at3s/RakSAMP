@@ -3,6 +3,7 @@
 */
 
 #include "main.h"
+#include "Security.h"
 
 extern PLAYER_SPAWN_INFO SpawnInfo;
 extern int iDrunkLevel, iMoney, iLocalPlayerSkin;
@@ -130,6 +131,15 @@ int sampConnect(char *szHostname, int iPort, char *szNickname, char *szPassword,
 
 	strcpy(g_szNickName, szNickname);
 	if(pRakClient == NULL) return 0;
+
+	// Oturum durumunu sifirla (grup/war/welcome/dialog bekleyicileri)
+	g_myGroupId = "";
+	g_myGroupName = "";
+	g_enemyGroupName = "";
+	g_inZoneWar = false;
+	g_waitingForPNetStats = false;
+	g_waitingForGStats = false;
+	g_bridgeSuppressEcho = 0;
 
 	pRakClient->SetPassword(szPassword);
 	return (int)pRakClient->Connect(szHostname, iPort, 0, 0, 5);

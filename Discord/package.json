@@ -1,0 +1,16 @@
+{
+  "name": "raksamp-vds-server",
+  "version": "1.0.0",
+  "description": "RakSAMP VDS Server and Discord Bot Integration",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "bun --watch server.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "express": "^4.19.2",
+    "mongoose": "^8.2.1",
+    "socket.io": "^4.7.5"
+  }
+}
