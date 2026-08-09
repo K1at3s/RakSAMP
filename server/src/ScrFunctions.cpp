@@ -707,6 +707,31 @@ int BroadcastScmEvent(lua_State *L)
 	return 1;
 }
 
+// Oyuncunun kendi grubunu ve zone war'daki dusman grubunu client'a bildir
+// Usage: setPlayerWarGroup(playerID, ownGroup, enemyGroup)
+int SetPlayerWarGroup(lua_State *L)
+{
+	BitStream bs;
+
+	PLAYERID playerID = lua_tointeger(L, 1);
+	char *szOwnGroup = (char *)lua_tostring(L, 2);
+	char *szEnemyGroup = (char *)lua_tostring(L, 3);
+
+	if(!szOwnGroup) szOwnGroup = (char *)"";
+	if(!szEnemyGroup) szEnemyGroup = (char *)"";
+
+	BYTE bOwnLen = strlen(szOwnGroup);
+	BYTE bEnemyLen = strlen(szEnemyGroup);
+
+	bs.Write(bOwnLen);
+	bs.Write(szOwnGroup, bOwnLen);
+	bs.Write(bEnemyLen);
+	bs.Write(szEnemyGroup, bEnemyLen);
+
+	pRakServer->RPC(&RPC_ScrSetWarGroup, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, pRakServer->GetPlayerIDFromIndex(playerID), FALSE, FALSE, UNASSIGNED_NETWORK_ID, NULL);
+	return 1;
+}
+
 void RegisterScriptingFunctions(lua_State *L)
 {
 	generateAndLoadInternalScript(L);
@@ -779,6 +804,8 @@ void RegisterScriptingFunctions(lua_State *L)
 	lua_register(L, "showPlayerDialog", ShowPlayerDialog);
 
 	lua_register(L, "broadcastScmEvent", BroadcastScmEvent);
+
+	lua_register(L, "setPlayerWarGroup", SetPlayerWarGroup);
 }
 
 // ---------------------------------------------------------------------------------------------------------

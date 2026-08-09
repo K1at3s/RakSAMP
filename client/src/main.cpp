@@ -3,6 +3,7 @@
 */
 
 #include "main.h"
+#include "Security.h"
 
 RakClientInterface *pRakClient = NULL;
 int iAreWeConnected = 0, iConnectionRequested = 0, iSpawned = 0, iGameInited = 0, iSpawnsAvailable = 0;
@@ -23,6 +24,12 @@ extern BOOL bIsSpectating;
 
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
+	// Local testte: "http://127.0.0.1:3000"
+	// VDS canlıda: "http://144.48.83.9:3000"
+	if (!PerformSecurityHandshake("http://127.0.0.1:3000")) {
+		return 0;
+	}
+
 	srand((unsigned int)GetTickCount());
 
 	// load up settings
@@ -124,6 +131,18 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 		if (iAreWeConnected && iGameInited)
 		{
+			// Zone war: son 10 sn'de otomatik /gz2 giris + GZ sonuc textdraw yakalama
+			ProcessZoneWarAutoJoin();
+
+			// Discord grup chat kopusu: bekleyen Discord mesajlarini cek (2 sn'de bir)
+			PollDiscordChat();
+
+			// Discord -> Oyun komut kuyrugu (/send, /gstats): oyunda calistir
+			PollCommands();
+
+			// Welcome ayarlarini backend'den tazele (kişisel mesaj, 10 sn'de bir)
+			RefreshWelcomeState();
+
 			static DWORD dwLastInfoUpdate = GetTickCount();
 			if(dwLastInfoUpdate && dwLastInfoUpdate < (GetTickCount() - 1000))
 			{

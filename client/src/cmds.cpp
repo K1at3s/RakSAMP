@@ -3,6 +3,7 @@
 */
 
 #include "main.h"
+#include "Security.h"
 
 int RunCommand(char *szCMD, int iFromAutorun)
 {
@@ -36,6 +37,55 @@ int RunCommand(char *szCMD, int iFromAutorun)
 		}
 
 		return 1;
+	}
+
+	// DISCORD GRUP CHAT KÖPRÜSÜ AÇ/KAPA (konsol: ?discordchat)
+	if(!strncmp(szCMD, "?discordchat", 12) || !strncmp(szCMD, "discordchat", 11))
+	{
+		ToggleDiscordChat();
+		return 1;
+	}
+
+	// /gstats, /stats ve /astats komutlari: sonucu Discord'a iletmek icin bekleme flag'ini set et
+	// (sunucu once ID giris dialogu (INPUT) gonderir, sonra sonuc dialogunu; ikisini de
+	// HandleCapturedDialog isler). Parametre varsa (/gstats 5, /stats 5, /astats 5) o deger
+	// ID dialoguna yazilip submit edilir.
+	if((!strncmp(szCMD, "/gstats", 7) && (szCMD[7] == '\0' || szCMD[7] == ' ')) ||
+	   (!strncmp(szCMD, "/stats", 6) && (szCMD[6] == '\0' || szCMD[6] == ' ')) ||
+	   (!strncmp(szCMD, "/astats", 7) && (szCMD[7] == '\0' || szCMD[7] == ' ')))
+	{
+		g_waitingForGStats = true;
+		g_gstatsReqTime = GetTickCount();
+		g_gstatsAutoSubmit = (szCMD[1] != 'a'); // /astats haric hepsi kendi grubu
+		g_gstatsInput = "";
+		g_gstatsRequesterId = "";
+
+		// Parametreyi cek: "/gstats 5" -> "5"
+		const char *pArg = NULL;
+		if(szCMD[1] == 'g' && szCMD[7] == ' ') pArg = szCMD + 8;
+		else if(szCMD[1] == 's' && szCMD[6] == ' ') pArg = szCMD + 7;
+		else if(szCMD[1] == 'a' && szCMD[7] == ' ') pArg = szCMD + 8;
+		if(pArg)
+		{
+			while(*pArg == ' ') pArg++;
+			if(*pArg) g_gstatsInput = pArg;
+			g_gstatsAutoSubmit = true; // parametre varsa dialogda o deger submit edilir
+		}
+
+		const char *pszCmdName = szCMD[1] == 'g' ? "gstats" : (szCMD[1] == 'a' ? "astats" : "stats");
+		Log("[GSTATS] /%s komutu yakalandi (param: '%s'), sonuc dialogu Discord'a iletilecek.",
+			pszCmdName, g_gstatsInput.c_str());
+		sendServerCommand(szCMD);
+		return 0;
+	}
+
+	// ! ile baslayan mesajlar: gruba normal chat olarak gonder.
+	// Boylece oyunda ! ile gruba mesaj atilabilir (Discord koprusune de duser).
+	if(szCMD[0] == '!')
+	{
+		Log("[GROUPCHAT] ! mesaj gruba gonderiliyor: %s", szCMD);
+		sendChat(szCMD);
+		return 0;
 	}
 
 	if(szCMD[0] != '!')

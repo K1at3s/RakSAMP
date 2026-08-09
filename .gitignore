@@ -1,0 +1,31 @@
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.suo
+*.user
+
+# Build outputs
+obj/
+Debug/
+Release/
+*.obj
+*.pdb
+*.ilk
+*.map
+*.exp
+*.lib
+*.log
+
+# Executables
+*.exe
+
+# Backend
+Discord/node_modules/
+Discord/*.db
+Discord/data/
+
+# Temp / misc
+UpgradeLog.htm
+pkt.obj
+Thumbs.db
+Backup/

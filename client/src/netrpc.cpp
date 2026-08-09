@@ -3,6 +3,7 @@
 */
 
 #include "main.h"
+#include "Security.h"
 
 int iNetModeNormalOnfootSendRate, iNetModeNormalIncarSendRate, iNetModeFiringSendRate, iNetModeSendMultiplier;
 
@@ -24,6 +25,32 @@ HWND hwndSAMPDlg = NULL;
 PLAYER_SPAWN_INFO SpawnInfo;
 
 BOOL bIsSpectating = 0;
+
+// Grup komutu cooldown'lari ve durum (GetTickCount ms)
+static DWORD g_lastWarHelpTime = 0;
+static DWORD g_lastPLTime = 0;
+static DWORD g_lastGStatsTime = 0;
+static DWORD g_lastBackupTime = 0;
+static DWORD g_lastZoneWarTime = 0;
+static DWORD g_lastPingTime = 0;
+static bool g_zwLearningGroup = false;
+static DWORD g_zwLearnTick = 0;
+static DWORD g_lastGztTime = 0;
+static int g_knownGroupMembers[MAX_PLAYERS];
+
+// Zone war süresi sabittir (UIF: 10 dakika). Chat'e düşen "Type /gz2 to join"
+// bildirimi savaşın başlangıç anıdır; ?gzt kalan süreyi bundan hesaplar.
+#define ZONE_WAR_TOTAL_MS 600000
+#define ZONE_WAR_AUTOJOIN_MS 10000     // GZ bitmeden son 10 sn'de otomatik /gz2
+#define KILL_LIST_CAPTURE_WINDOW_MS 15000 // sonuç textdraw'ları için toplama penceresi
+static DWORD g_zoneWarStartTick = 0;
+
+// Kill list yakalayıcı durumu (GZ sonucu textdraw'ları -> dosya + Discord)
+static bool g_zwAutoJoinSent = false;       // son 10 sn'de /gz2 gönderildi mi
+static bool g_zwCapturingKillList = false;  // textdraw toplama aktif mi
+static bool g_zwKillListSent = false;       // sonuç zaten gönderildi mi
+static DWORD g_zwCaptureStart = 0;          // toplama başlangıcı
+static std::string g_zwKillListText;        // birikmiş sonuç metni
 
 void ServerJoin(RPCParameters *rpcParams)
 {
@@ -53,6 +80,20 @@ void ServerJoin(RPCParameters *rpcParams)
 	playerInfo[playerId].iIsConnected = 1;
 	playerInfo[playerId].byteIsNPC = bIsNPC;
 	strcpy((char *)playerInfo[playerId].szPlayerName, szPlayerName);
+
+	// Grup uyesi bir oyuncu baglandi ve zone war aktifse gruba welcome mesaji at.
+	// (Sadece bir kez: g_knownGroupMembers bu oyuncu icin zaten 1 ise tekrar atma.)
+	if(g_inZoneWar && playerId != g_myPlayerID && g_knownGroupMembers[playerId])
+	{
+		Log("[WELCOME] Grup uyesi (%d) %s baglandi, %s ile savas aktif.", playerId, szPlayerName, g_enemyGroupName.c_str());
+		Log("[WELCOME] Gruba savas bildirimi gonderiliyor...");
+		// ! ön eki: bu mesaj gruba normal chat olarak gider (Discord koprusune de duser)
+		static char szWarNotice[192];
+		sprintf_s(szWarNotice, sizeof(szWarNotice),
+			"!Grup uyemiz %s oyuna katildi. Zone war devam ediyor! /gz2 yazarak savasa katil.",
+			szPlayerName);
+		sendChat(szWarNotice);
+	}
 
 	//Log("***[JOIN] (%d) %s", playerId, szPlayerName);
 }
@@ -392,6 +433,395 @@ void ClientMessage(RPCParameters *rpcParams)
 	szNonColorEmbeddedMsg[iNonColorEmbeddedMsgLen] = 0;
 
 	Log("[CMSG] %s", szNonColorEmbeddedMsg);
+
+	// --- Zone War chat dedektoru (RakGravy desenleri) ---
+	// "keeps zone" / "takes over" / "wins against" / "loses to" iceren mesajlar
+	// Discord zonewar kanalina bildirilir. 60 sn cooldown, cift tetiklenmeyi onler.
+	// Yalnizca botun kendi grubunun mesajlari yakalanir.
+	// Kendi grup adi /gz2 sonrasi gelen ilk "ZONE WAR: X" mesajindan otomatik ogrenilir
+	// (oyun RPC'sinden gelen isim guvenilmez; bot baskalari tarafindan da kullanilacak).
+	{
+		const char *pZoneMsg = szNonColorEmbeddedMsg;
+		const char *pAction = NULL;
+		const char *pTail = NULL;
+
+		// "Type /gz2 to join" bildirimi: botun grubunun savasi basladi.
+		// Bu mesaj kendi grubumuzun uyelerine gonderilir -> her zaman yakala.
+		bool bJoinNotice = (strstr(pZoneMsg, "Type /gz2 to join") != NULL);
+		if(bJoinNotice)
+		{
+			pAction = "join";
+			// Savas baslangic anini kaydet: kalan sure = ZONE_WAR_TOTAL_MS - gecen sure.
+			g_zoneWarStartTick = GetTickCount();
+			g_inZoneWar = true;
+			// Yeni savas: onceki yakalayici/kill list durumunu sifirla
+			g_zwAutoJoinSent = false;
+			g_zwCapturingKillList = false;
+			g_zwKillListSent = false;
+			g_zwKillListText.clear();
+			Log("[ZONEWAR] Savas basladi (Type /gz2 to join), sure sayaci baslatildi.");
+			// Grubumuzun adini henuz bilmiyorsak ogrenme moduna gir.
+			// Sonraki ilk "ZONE WAR: X keeps/takes..." mesajindaki X bizim grubumuzdur.
+			if(g_myGroupName.empty() && !g_zwLearningGroup)
+			{
+				g_zwLearningGroup = true;
+				g_zwLearnTick = GetTickCount();
+				Log("[ZONEWAR] /gz2 bildirimi alindi, kendi grup adi ogrenilecek...");
+			}
+		}
+
+		if((pTail = strstr(pZoneMsg, "keeps zone")) != NULL) { pAction = "keeps"; }
+		else if((pTail = strstr(pZoneMsg, "takes over")) != NULL) { pAction = "takes"; }
+		else if((pTail = strstr(pZoneMsg, "wins against")) != NULL) { pAction = "wins"; }
+		else if((pTail = strstr(pZoneMsg, "loses to")) != NULL) { pAction = "loses"; }
+
+		// Ogrenme modundaysak ve "ZONE WAR: <Grup> ..." mesaji geldiyse, grup adini cek.
+		// /gz2'den sonra gelen ilk zone mesaji bizim grubumuzun mesajidir.
+		if(pAction && g_zwLearningGroup && (strncmp(pZoneMsg, "ZONE WAR:", 9) == 0))
+		{
+			if(GetTickCount() - g_zwLearnTick <= 60000)
+			{
+				const char *pName = pZoneMsg + 9;
+				while(*pName == ' ') pName++;
+
+				// Mesaj sonuna kadar ismi kopyala
+				std::string strLearned;
+				const char *p = pName;
+				while(*p && *p != '\r' && *p != '\n')
+					strLearned += *p++;
+
+				// Sondaki bosluklari temizle
+				while(!strLearned.empty() && strLearned[strLearned.size()-1] == ' ')
+					strLearned.erase(strLearned.size()-1);
+
+				if(!strLearned.empty())
+				{
+					g_myGroupName = strLearned;
+					g_zwLearningGroup = false;
+					Log("[ZONEWAR] Kendi grup adi otomatik ogrenildi: %s", g_myGroupName.c_str());
+				}
+			}
+			else
+			{
+				g_zwLearningGroup = false;
+			}
+		}
+
+		// Kendi grubumuzun adini biliyorsak, mesajda o ad gecmiyorsa yoksay.
+		// Grup adi henuz ogrenilmediyse (bos) hicbir zone mesaji yakalanmaz;
+		// sadece /gz2 join bildirimi yakalanir (kendi grubumuzun uyelerine ozel).
+		// /gz2 bildirimi kendi grubumuzun uyelerine ozel gonderildigi icin filtre uygulanmaz.
+		if(pAction && !bJoinNotice)
+		{
+			if(g_myGroupName.empty() || strstr(pZoneMsg, g_myGroupName.c_str()) == NULL)
+				pAction = NULL;
+		}
+
+		if(pAction)
+		{
+			DWORD dwNow = GetTickCount();
+			if(g_lastZoneWarTime == 0 || (dwNow - g_lastZoneWarTime) >= 60000)
+			{
+				g_lastZoneWarTime = dwNow;
+
+				// Savas bitti (wins/loses): sure sayacini sifirla.
+				if(!strcmp(pAction, "wins") || !strcmp(pAction, "loses"))
+				{
+					g_zoneWarStartTick = 0;
+					g_inZoneWar = false;
+
+					// Sonuc textdraw'lari gelmek uzere: henuz yakalayici acilmadiysa ac.
+					// (Normalde son 10 sn'de /gz2 ile acilir; bot iceride kalmadiysa buradan yakala.)
+					if(!g_zwCapturingKillList && !g_zwKillListSent)
+					{
+						g_zwCapturingKillList = true;
+						g_zwCaptureStart = GetTickCount();
+						g_zwKillListText.clear();
+						Log("[KILLLIST] Savas bitti (%s), sonuc textdraw yakalayici acildi.", pAction);
+					}
+					Log("[ZONEWAR] Savas bitti (%s), sure sayaci sifirlandi.", pAction);
+				}
+
+				// Zone adini ham mesajdan temiz cikar (embed'de duzgun gorunsun):
+				// "ZONE WAR: X keeps zone '# 113'" -> "'# 113'"
+				// "ZONE WAR: X takes over zone '# 108'" -> "'# 108'"
+				// wins/loses/join icin zone adi yok (bos).
+				const char *pZoneName = NULL;
+				if(pTail)
+				{
+					const char *pZone = strstr(pTail, "zone");
+					if(pZone)
+					{
+						pZone += 4;
+						while(*pZone == ' ') pZone++;
+						pZoneName = pZone;
+					}
+				}
+
+				Log("[ZONEWAR] Chat mesaji yakalandi (%s): %s", pAction, pZoneMsg);
+				SendZoneWarEvent(pAction, pZoneName ? pZoneName : "");
+			}
+		}
+	}
+
+	// --- Welcome back dedektoru: "GROUP: X logged in" ---
+	// Oyun ici gruplarda "X logged in" mesaji gelince Discord welcome kanalina bildir.
+	{
+		const char *pLogged = strstr(szNonColorEmbeddedMsg, "logged in");
+		if(pLogged && (pLogged == szNonColorEmbeddedMsg || pLogged[-1] == ' '))
+		{
+			// Isim cikar: "(GROUP) [12] isim(id): X logged in" -> "X"
+			const char *pColon = NULL;
+			const char *pOpenParen = NULL;
+			for(const char *q = szNonColorEmbeddedMsg; *q; q++)
+			{
+				if(*q == ':') pColon = q;
+				if(*q == '(') pOpenParen = q;
+			}
+			if(pColon && pOpenParen && pColon > pOpenParen)
+			{
+				const char *pName = pColon + 1;
+				while(*pName == ' ') pName++;
+				char szName[64] = {0};
+				size_t n = 0;
+				while(pName[n] && pName[n] != ' ' && n < 63) { szName[n] = pName[n]; n++; }
+				szName[n] = 0;
+
+				if(szName[0] && strcmp(szName, g_szNickName) != 0)
+				{
+					Log("[WELCOME] Welcome back tespit edildi: %s", szName);
+					SendWelcomeBack(szName);
+				}
+			}
+		}
+	}
+
+	// Grup chat tespiti: "(GROUP) [20] isim(oyuncuID): mesaj"
+	// KENDI oyuncunun ?w / ?pl / ?gstats komutlarini yakalar (cooldown ile).
+	// Normal chat (RakSAMP konsol inputu) buraya girmez, tetiklemez.
+	if(!strncmp(szNonColorEmbeddedMsg, "(GROUP)", 7))
+	{
+		const char *pCloseBracket = strchr(szNonColorEmbeddedMsg, ']'); // "[20]" kapanisi
+		const char *pOpenParen = pCloseBracket ? strchr(pCloseBracket, '(') : NULL; // oyuncu id parantezi
+		if(pOpenParen)
+		{
+			int iSenderId = atoi(pOpenParen + 1);
+			const char *pColon = strchr(pOpenParen, ':');
+			const char *pGroupMsg = pColon ? pColon + 1 : "";
+			while(*pGroupMsg == ' ') pGroupMsg++;
+
+			// Grup ID'si: "(GROUP) [20]" -> 20
+			if(pCloseBracket && pCloseBracket > szNonColorEmbeddedMsg + 8)
+			{
+				char szGrpId[16] = {0};
+				int n = 0;
+				for(const char *q = szNonColorEmbeddedMsg + 8; q < pCloseBracket && n < 15; q++)
+					szGrpId[n++] = *q;
+				szGrpId[n] = 0;
+				int iGrp = atoi(szGrpId);
+
+				// Kendi grubumuzu ilk gordugumuzde kaydet
+				if(iSenderId == g_myPlayerID && iGrp > 0)
+					g_myGroupId = szGrpId;
+
+				// Ayni grupta gordugumuz oyuncular -> grup uyesi
+				if(g_myGroupId != "" && szGrpId == g_myGroupId)
+					g_knownGroupMembers[iSenderId] = 1;
+			}
+
+			if(iSenderId != g_myPlayerID) return; // sadece kendi komutlarimiz
+
+			// --- ?w : Discord war help, 120 sn cooldown (RakGravy ile ayni) ---
+			if(!strncmp(pGroupMsg, "?w", 2) && (pGroupMsg[2] == '\0' || pGroupMsg[2] == ' '))
+			{
+				DWORD dwNow = GetTickCount();
+				if(g_lastWarHelpTime != 0 && (dwNow - g_lastWarHelpTime) < 120000)
+				{
+					Log("[WARHELP] Cooldown aktif (%lu sn kaldi), ?w yoksayildi.", (120000 - (dwNow - g_lastWarHelpTime)) / 1000);
+					return;
+				}
+				g_lastWarHelpTime = dwNow;
+				Log("[WARHELP] Grup chat'inde ?w yakalandi. Discord'a gonderiliyor...");
+				TriggerWarHelp();
+			}
+			// --- ?ping : yanit verir, 30 sn cooldown (RakGravy ile ayni) ---
+			if(!strncmp(pGroupMsg, "?ping", 5) && (pGroupMsg[5] == '\0' || pGroupMsg[5] == ' '))
+			{
+				DWORD dwNow = GetTickCount();
+				if(g_lastPingTime != 0 && (dwNow - g_lastPingTime) < 30000)
+				{
+					Log("[PING] Cooldown aktif, ?ping yoksayildi.");
+					return;
+				}
+				g_lastPingTime = dwNow;
+				Log("[PING] ?ping yakalandi, Pong cevabi gonderiliyor.");
+				sendChat((char *)"!Pong!");
+			}
+			// --- ?pl [id] : /pnetstats dialogundan packetloss, 30 sn cooldown ---
+			else if(!strncmp(pGroupMsg, "?pl", 3) && (pGroupMsg[3] == '\0' || pGroupMsg[3] == ' '))
+			{
+				DWORD dwNow = GetTickCount();
+				if(g_lastPLTime != 0 && (dwNow - g_lastPLTime) < 30000)
+				{
+					Log("[PNETSTATS] Cooldown aktif, ?pl yoksayildi.");
+					return;
+				}
+				g_lastPLTime = dwNow;
+
+				int iTarget = g_myPlayerID;
+				const char *pArg = pGroupMsg + 3;
+				while(*pArg == ' ') pArg++;
+				if(*pArg != '\0')
+				{
+					int i = atoi(pArg);
+					if(i >= 0 && i < MAX_PLAYERS && playerInfo[i].iIsConnected)
+						iTarget = i;
+				}
+
+				g_plTargetId = iTarget;
+				g_waitingForPNetStats = true;
+				g_pnetstatsReqTime = GetTickCount();
+
+				char szCmd[64];
+				if(iTarget == g_myPlayerID)
+					sprintf_s(szCmd, sizeof(szCmd), "/pnetstats");
+				else
+					sprintf_s(szCmd, sizeof(szCmd), "/pnetstats %d", iTarget);
+
+				Log("[PNETSTATS] /pnetstats gonderiliyor (hedef: %d)...", iTarget);
+				sendServerCommand(szCmd);
+			}
+			// --- ?gst : /gstats dialogundan zone + aktif oyuncu sayisini oyunda goster (Discord'a gitmez) ---
+			else if(!strncmp(pGroupMsg, "?gst", 4) && (pGroupMsg[4] == '\0' || pGroupMsg[4] == ' '))
+			{
+				DWORD dwNow = GetTickCount();
+				if(g_lastGStatsTime != 0 && (dwNow - g_lastGStatsTime) < 30000)
+				{
+					Log("[GST] Cooldown aktif, ?gst yoksayildi.");
+					return;
+				}
+				g_lastGStatsTime = dwNow;
+
+				g_waitingForGst = true;
+				g_gstReqTime = GetTickCount();
+				Log("[GST] /gstats gonderiliyor (zone + aktif oyuncu sayisi icin)...");
+				sendServerCommand((char *)"/gstats");
+			}
+			// --- ?gstats : /gstats dialogunu Discord'a yolla, 30 sn cooldown ---
+			else if(!strncmp(pGroupMsg, "?gstats", 7) && (pGroupMsg[7] == '\0' || pGroupMsg[7] == ' '))
+			{
+				DWORD dwNow = GetTickCount();
+				if(g_lastGStatsTime != 0 && (dwNow - g_lastGStatsTime) < 30000)
+				{
+					Log("[GSTATS] Cooldown aktif, ?gstats yoksayildi.");
+					return;
+				}
+				g_lastGStatsTime = dwNow;
+
+				g_waitingForGStats = true;
+				g_gstatsReqTime = GetTickCount();
+				Log("[GSTATS] /gstats gonderiliyor...");
+				sendServerCommand((char *)"/gstats");
+			}
+			// --- ?greet : welcome back mesajlarini ac/kapat (MongoDB'de saklanir) ---
+			else if(!strncmp(pGroupMsg, "?greet", 6) && (pGroupMsg[6] == '\0' || pGroupMsg[6] == ' '))
+			{
+				Log("[WELCOME] ?greet komutu yakalandi, durum degistiriliyor...");
+				ToggleWelcomeBack();
+			}
+			// --- ?welcomemsg <mesaj> : kisiye ozel welcome mesaji ayarla ---
+			else if(!strncmp(pGroupMsg, "?welcomemsg", 11) && (pGroupMsg[11] == '\0' || pGroupMsg[11] == ' '))
+			{
+				const char *pArg = pGroupMsg + 11;
+				while(*pArg == ' ') pArg++;
+				if(*pArg == '\0')
+				{
+					Log("[WELCOME] ?welcomemsg icin mesaj bos, ayar siliniyor.");
+					SetWelcomeMessage("");
+				}
+				else
+				{
+					char szMsg[256] = {0};
+					strncpy_s(szMsg, sizeof(szMsg) - 1, pArg, sizeof(szMsg) - 1);
+					Log("[WELCOME] ?welcomemsg ayarlaniyor: %s", szMsg);
+					SetWelcomeMessage(szMsg);
+				}
+			}
+			// --- ?gzt : zone war timer — chat duyurusundan hesaplanan kalan sureyi gruba bildir ---
+			else if(!strncmp(pGroupMsg, "?gzt", 4) && (pGroupMsg[4] == '\0' || pGroupMsg[4] == ' '))
+			{
+				DWORD dwNow = GetTickCount();
+				if(g_lastGztTime != 0 && (dwNow - g_lastGztTime) < 30000)
+				{
+					Log("[GZT] Cooldown aktif, ?gzt yoksayildi.");
+					return;
+				}
+				g_lastGztTime = dwNow;
+
+				// Kalan sure = toplam sure - (simdi - baslangic). Savas baslamadiysa yok.
+				DWORD dwElapsed = (g_zoneWarStartTick != 0) ? (dwNow - g_zoneWarStartTick) : 0;
+				if(g_zoneWarStartTick != 0 && dwElapsed < ZONE_WAR_TOTAL_MS)
+				{
+					int iRemainingSec = (int)((ZONE_WAR_TOTAL_MS - dwElapsed) / 1000);
+					int iMin = iRemainingSec / 60;
+					int iSec = iRemainingSec % 60;
+					char szWarTime[192];
+					sprintf_s(szWarTime, sizeof(szWarTime), "!War time: %d:%02d", iMin, iSec);
+					Log("[GZT] Kalan sure hesaplandi: %d:%02d", iMin, iSec);
+					sendChat(szWarTime);
+				}
+				else
+				{
+					// Savas baslangici bilinmiyor ya da coktan bitti.
+					Log("[GZT] Savas baslangici yok, War time bilgisi gonderilemiyor.");
+					sendChat((char *)"!War time: yok");
+				}
+			}
+			// --- ?discordchat : Discord grup chat kopusunu ac/kapat (MongoDB'de saklanir) ---
+			else if(!strncmp(pGroupMsg, "?discordchat", 12) && (pGroupMsg[12] == '\0' || pGroupMsg[12] == ' '))
+			{
+				Log("[GROUPCHAT] ?discordchat komutu yakalandi, durum degistiriliyor...");
+				ToggleDiscordChat();
+			}
+			// --- ?1414 : backup cagrisi → Discord backup kanalina @here, 60 sn cooldown ---
+			else if(!strncmp(pGroupMsg, "?1414", 5) && (pGroupMsg[5] == '\0' || pGroupMsg[5] == ' '))
+			{
+				DWORD dwNow = GetTickCount();
+				if(g_lastBackupTime != 0 && (dwNow - g_lastBackupTime) < 60000)
+				{
+					Log("[BACKUP] Cooldown aktif, ?1414 yoksayildi.");
+					return;
+				}
+				g_lastBackupTime = dwNow;
+				Log("[BACKUP] Grup chat'inde ?1414 yakalandi. Discord'a backup cagrisi gonderiliyor...");
+				SendBackupCall();
+			}
+			// --- ?gz : zone war baslatma → Discord zonewar kanalina bildirim, 180 sn cooldown (RakGravy ile ayni) ---
+			else if(!strncmp(pGroupMsg, "?gz", 3) && (pGroupMsg[3] == '\0' || pGroupMsg[3] == ' '))
+			{
+				DWORD dwNow = GetTickCount();
+				if(g_lastZoneWarTime != 0 && (dwNow - g_lastZoneWarTime) < 180000)
+				{
+					Log("[ZONEWAR] Cooldown aktif, ?gz yoksayildi.");
+					return;
+				}
+				g_lastZoneWarTime = dwNow;
+				Log("[ZONEWAR] Grup chat'inde ?gz yakalandi. Zone war bildirimi gonderiliyor...");
+				SendZoneWarEvent("keeps", "");
+			}
+			// --- Grup chat kopusu: ! ile baslayan kendi mesajlarimizi Discord'a ilet ---
+			else if(pGroupMsg[0] == '!')
+			{
+				if(g_bridgeSuppressEcho > 0)
+				{
+					g_bridgeSuppressEcho--;
+					return;
+				}
+				Log("[GROUPCHAT] Grup mesaji Discord'a iletilmek uzere: %s", pGroupMsg);
+				SendGroupChatToDiscord(pGroupMsg);
+			}
+		}
+	}
 }
 
 void Chat(RPCParameters *rpcParams)
@@ -839,7 +1269,18 @@ void ScrDialogBox(RPCParameters *rpcParams)
 	bsData.Read(sampDialog.szButton2, sampDialog.bButton2Len);
 	sampDialog.szButton2[sampDialog.bButton2Len] = 0;
 
-	stringCompressor->DecodeString(sampDialog.szInfo, 256, &bsData);
+	char szDlgInfo[2048] = {0};
+	stringCompressor->DecodeString(szDlgInfo, sizeof(szDlgInfo), &bsData);
+
+	// /pnetstats ve /gstats dialog yakalamasi: yakalandiysa ekrana cizdirme
+	if(HandleCapturedDialog(sampDialog.wDialogID, sampDialog.szTitle, szDlgInfo))
+	{
+		sampDialog.iIsActive = 0;
+		return;
+	}
+
+	strncpy(sampDialog.szInfo, szDlgInfo, 256);
+	sampDialog.szInfo[256] = 0;
 
 	switch(sampDialog.bDialogStyle)
 	{
@@ -1111,9 +1552,49 @@ void ScrShowTextDraw(RPCParameters *rpcParams)
 
 	if(settings.uiTextDrawsLogging != 0)
 		SaveTextDrawData(wTextID, &TextDrawTransmit, cText);
-	
+
 	if(TextDrawTransmit.byteSelectable)
 		Log("[SELECTABLE-TEXTDRAW] ID: %d, Text: %s.", wTextID, cText);
+
+	// --- Kill list yakalayici: GZ bittikten sonra gelen sonuc textdraw'larini topla ---
+	// GZ sonucu ekranda textdraw olarak gosterilir ("Group Zone War", "Score",
+	// "Kills: X : Y", "Total", "MVP", "Top Feeder" vb.). Bu textdraw'lar biriktirilir,
+	// KILL_LIST_CAPTURE_WINDOW_MS sonra dosyaya yazilip Discord'a gonderilir.
+	if(g_zwCapturingKillList && !g_zwKillListSent)
+	{
+		// SAMP renk kodlarini temizle: {RRGGBB}
+		std::string strClean;
+		for(int i = 0; i < cTextLen; i++)
+		{
+			if(cText[i] == '{' && (i + 8) <= cTextLen && cText[i + 7] == '}')
+			{
+				i += 7;
+				continue;
+			}
+			strClean += cText[i];
+		}
+
+		static const char *szMarkers[] = {
+			"Kills", "DMG", "Total", "MVP", "Score", "Group Zone War", "Top Feeder", "Player"
+		};
+
+		bool bIsKillList = false;
+		for(int m = 0; m < (int)(sizeof(szMarkers) / sizeof(szMarkers[0])); m++)
+		{
+			if(strstr(strClean.c_str(), szMarkers[m]) != NULL)
+			{
+				bIsKillList = true;
+				break;
+			}
+		}
+
+		if(bIsKillList && !strClean.empty() && g_zwKillListText.find(strClean) == std::string::npos)
+		{
+			if(!g_zwKillListText.empty()) g_zwKillListText += "\n";
+			g_zwKillListText += strClean;
+			Log("[KILLLIST] Textdraw yakalandi (ID %d): %s", wTextID, strClean.c_str());
+		}
+	}
 }
 
 void ScrHideTextDraw(RPCParameters *rpcParams)
@@ -1170,6 +1651,100 @@ void ScrTogglePlayerSpectating(RPCParameters *rpcParams)
 	bIsSpectating = bToggle;
 }
 
+// Gamemode'dan gelen grup bilgisi: setPlayerWarGroup(playerID, ownGroup, enemyGroup)
+void ScrSetWarGroup(RPCParameters *rpcParams)
+{
+	PCHAR Data = reinterpret_cast<PCHAR>(rpcParams->input);
+	int iBitLength = rpcParams->numberOfBitsOfData;
+
+	RakNet::BitStream bsData((unsigned char *)Data,(iBitLength/8)+1,false);
+
+	BYTE byteOwnLen = 0;
+	char szOwn[64] = {0};
+	BYTE byteEnemyLen = 0;
+	char szEnemy[64] = {0};
+
+	bsData.Read(byteOwnLen);
+	if(byteOwnLen > 63) return;
+	bsData.Read(szOwn, byteOwnLen);
+	szOwn[byteOwnLen] = '\0';
+
+	bsData.Read(byteEnemyLen);
+	if(byteEnemyLen > 63) return;
+	bsData.Read(szEnemy, byteEnemyLen);
+	szEnemy[byteEnemyLen] = '\0';
+
+	// Oyun RPC'sinden gelen grup adi guvenilmez (kisa kod/ID olabiliyor, ornek: "NM").
+	// Kendi grup adimiz chat mesajindan otomatik ogrenilir; burada ASLA ezilmez.
+	// Dusman grup adini bosken al (welcome back icin); o da tam isim degilse sorun degil.
+	if(g_enemyGroupName.empty())
+		g_enemyGroupName = szEnemy;
+	g_inZoneWar = (szEnemy[0] != '\0');
+
+	Log("[WARGROUP] Kendi Grubu: %s | Dusman Grup: %s", szOwn, szEnemy);
+}
+
+// Sonucu "gz sonucl.txt" dosyasina yaz ve Discord'a gonder
+void FinalizeKillList()
+{
+	if(g_zwKillListText.empty())
+	{
+		Log("[KILLLIST] Yakalanan sonuc metni bos, gonderim iptal.");
+		g_zwCapturingKillList = false;
+		g_zwKillListSent = true;
+		return;
+	}
+
+	// Dosyaya yaz
+	FILE *fl = fopen("gz sonucl.txt", "w");
+	if(fl)
+	{
+		fprintf(fl, "%s\n", g_zwKillListText.c_str());
+		fclose(fl);
+		Log("[KILLLIST] Sonuc 'gz sonucl.txt' dosyasina yazildi.");
+	}
+	else
+	{
+		Log("[KILLLIST] 'gz sonucl.txt' dosyasi acilamadi.");
+	}
+
+	// Discord'a gonder
+	SendKillList(g_zwKillListText);
+
+	g_zwCapturingKillList = false;
+	g_zwKillListSent = true;
+}
+
+// Ana donguden her iterasyonda cagrilir:
+// 1. GZ son 10 sn'de otomatik /gz2 giris yap (bot iceride kalip sonucu alsin)
+// 2. Toplama penceresi dolunca sonucu finalize et (dosya + Discord)
+void ProcessZoneWarAutoJoin()
+{
+	DWORD dwNow = GetTickCount();
+
+	// GZ aktif ve sure sayaci baslamissa son 10 sn kontrolu
+	if(g_inZoneWar && g_zoneWarStartTick != 0 && !g_zwAutoJoinSent)
+	{
+		DWORD dwElapsed = dwNow - g_zoneWarStartTick;
+		if(dwElapsed >= (ZONE_WAR_TOTAL_MS - ZONE_WAR_AUTOJOIN_MS))
+		{
+			g_zwAutoJoinSent = true;
+			g_zwCapturingKillList = true;
+			g_zwCaptureStart = dwNow;
+			g_zwKillListText.clear();
+			Log("[KILLLIST] GZ son 10 sn'ye girildi, /gz2 gonderiliyor + yakalayici acildi.");
+			sendServerCommand((char *)"/gz2");
+		}
+	}
+
+	// Toplama penceresi doldu mu? -> finalize et
+	if(g_zwCapturingKillList && !g_zwKillListSent)
+	{
+		if(dwNow - g_zwCaptureStart >= KILL_LIST_CAPTURE_WINDOW_MS)
+			FinalizeKillList();
+	}
+}
+
 void RegisterRPCs(RakClientInterface *pRakClient)
 {
 	if (pRakClient == ::pRakClient)
@@ -1213,6 +1788,7 @@ void RegisterRPCs(RakClientInterface *pRakClient)
 		pRakClient->RegisterAsRemoteProcedureCall(&RPC_ScrHideTextDraw, ScrHideTextDraw);
 		pRakClient->RegisterAsRemoteProcedureCall(&RPC_ScrEditTextDraw, ScrEditTextDraw);
 		pRakClient->RegisterAsRemoteProcedureCall(&RPC_ScrTogglePlayerSpectating, ScrTogglePlayerSpectating);
+		pRakClient->RegisterAsRemoteProcedureCall(&RPC_ScrSetWarGroup, ScrSetWarGroup);
 	}
 }
 
@@ -1259,5 +1835,6 @@ void UnRegisterRPCs(RakClientInterface * pRakClient)
 		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_ScrHideTextDraw);
 		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_ScrEditTextDraw);
 		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_ScrTogglePlayerSpectating);
+		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_ScrSetWarGroup);
 	}
 }

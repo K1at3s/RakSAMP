@@ -82,6 +82,12 @@ function onPlayerSpawn(playerID)
 	
 	setPlayerHealth(playerID, 100)
 	setPlayerArmour(playerid, 100)
+
+	-- RakSAMP War Help: oyuncunun kendi grubu ve zone war'daki dusman grubu
+	-- Oyuncu oyun icinde ?w yazarsa Discord'a:
+	--   @everyone <isim> needs help — NM vs HM
+	-- mesaji dusurulur. Gruplari kendi gamemode mantigina gore guncelleyin.
+	setPlayerWarGroup(playerID, "NM", "HM")
 end
 
 function onPlayerDeath(playerID, killerID, reasonID)
