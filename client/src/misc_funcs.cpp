@@ -24,6 +24,8 @@ DWORD dwLastBulletFlood = GetTickCount();
 
 int dd = 0;
 
+bool g_frSentOnce = false;
+
 // false - down | true - up
 bool bHealthPulseDirection = false;
 bool bArmourPulseDirection = true;
@@ -140,6 +142,7 @@ int sampConnect(char *szHostname, int iPort, char *szNickname, char *szPassword,
 	g_waitingForPNetStats = false;
 	g_waitingForGStats = false;
 	g_bridgeSuppressEcho = 0;
+	g_frSentOnce = false; // yeni oturumda /fr tek gonderim icin flag'i sifirla
 
 	pRakClient->SetPassword(szPassword);
 	return (int)pRakClient->Connect(szHostname, iPort, 0, 0, 5);
@@ -187,6 +190,9 @@ void sampSpawn()
 	
 	bIsSpectating = 0;
 
+	// Freeroam'a gecis: /fr'yi BURADA gonderme. Bu erken asama (login/auth oncesi) sunucuyu
+	// cok erken tetikler ve g_frSentOnce bayragi yutar; gercek spawn onayi gelince (/fr'nin
+	// gonderilmesi gereken an) SpawnConfirmed'da gonderilmelidir. Bakiniz: netrpc.cpp SpawnConfirmed.
 	Log("You have been spawned!");
 }
 
@@ -341,6 +347,17 @@ void sendServerCommand(char *szCommand)
 
 void sendChat(char *szMessage)
 {
+	// Grup chat komutlari (?help, ?w, ?ping, ?pl, ?gst, ?gstats, ?greet, ?welcomemsg,
+	// ?gzt, ?discordchat, ?1414, ?gz) ve Discord koprusu (!!<mesaj>): UIF sunucusu
+	// kendi mesajimizi (GROUP) olarak geri echo etmedigi icin bu mesajlar ClientMessage
+	// yakalamasinda hic tetiklenmez. Bu yuzden oyun ici sohbet kutusundan gelen her
+	// mesaj burada lokal islenir. (HandleGroupCommand'in kendi sendChat cevaplari da
+	// buraya girer; g_bridgeSuppressEcho ile Discord'a gitmeleri engellenir.)
+	if(szMessage && (szMessage[0] == '?' || szMessage[0] == '!'))
+	{
+		HandleGroupCommand(szMessage, g_myPlayerID);
+	}
+
 	RakNet::BitStream bsSend;
 	BYTE byteTextLen = strlen(szMessage);
 	bsSend.Write(byteTextLen);
@@ -448,6 +465,7 @@ unsigned short getPlayerCount()
 	for(int i = 0; i < MAX_PLAYERS; i++)
 	{
 		if(!playerInfo[i].iIsConnected) continue;
+		if(playerInfo[i].byteIsNPC) continue; // NPC'leri sayma, sadece gercek oyuncular
 		count++;
 	}
 	return count;

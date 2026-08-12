@@ -189,6 +189,37 @@ static double ExtractPacketLoss(const char *szText) {
     return -1.0;
 }
 
+// Genel sayi cikarma: metinde key'e yakin ilk sayiyi dondurur (yoksa -1.0).
+// Ornek: "FPS: 60" -> 60, "Ping 45 ms" -> 45. Once ileri, olmazsa geriye arar.
+static double ExtractNumberNear(const char *szText, const char *key) {
+    if (!szText || !key) return -1.0;
+    int len = (int)strlen(szText);
+    const char *p = strstr(szText, key);
+    if (!p) return -1.0;
+
+    const char *q = p - 30; if (q < szText) q = szText;
+    const char *end = p + (int)strlen(key) + 30; if (end > szText + len) end = szText + len;
+
+    for (const char *r = p + (int)strlen(key); r < end; r++) {
+        if (*r >= '0' && *r <= '9') {
+            const char *s = r;
+            while (s > q && ((*(s - 1) >= '0' && *(s - 1) <= '9') || *(s - 1) == '.')) s--;
+            double d = atof(s);
+            if (d >= 0.0) return d;
+            break;
+        }
+    }
+    for (const char *r = p - 1; r >= q; r--) {
+        if (*r >= '0' && *r <= '9') {
+            const char *s = r;
+            while (s > q && ((*(s - 1) >= '0' && *(s - 1) <= '9') || *(s - 1) == '.')) s--;
+            double d = atof(s);
+            if (d >= 0.0) return d;
+            break;
+        }
+    }
+    return -1.0;
+}
 
 // netrpc.cpp'deki ScrDialogBox'tan cagrilir: dialog dogru decode edildikten sonra
 // /pnetstats ve /gstats yakalamasini yapar. Yakaladiysa 1, yakalamadiysa 0 dondurur.
@@ -215,13 +246,26 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
             return 0;
 
         double dLoss = ExtractPacketLoss(szInfo);
-        char szResult[160];
+        double dFps = ExtractNumberNear(szInfo, "fps");
+        double dPing = ExtractNumberNear(szInfo, "ping");
+        if (dPing < 0.0 && g_plTargetId >= 0 && g_plTargetId < MAX_PLAYERS)
+            dPing = (double)playerInfo[g_plTargetId].dwPing; // scoreboard ping'i
+
+        Log("[PNETSTATS-DATA] [%s] %.1500s", szTitle ? szTitle : "?", szInfo);
+
+        char szResult[192];
+        const char *pPlName = (g_plTargetId >= 0 && g_plTargetId < MAX_PLAYERS && playerInfo[g_plTargetId].szPlayerName[0])
+            ? playerInfo[g_plTargetId].szPlayerName : g_szNickName;
         if (dLoss >= 0.0) {
-            if (g_plTargetId == g_myPlayerID)
-                sprintf_s(szResult, sizeof(szResult), "!Packetloss: %.2f%%", dLoss);
-            else
-                sprintf_s(szResult, sizeof(szResult), "!%s (%d) Packetloss: %.2f%%",
-                    playerInfo[g_plTargetId].szPlayerName, g_plTargetId, dLoss);
+            unsigned int uiFps = (dFps >= 0.0 && dFps <= 1000.0) ? (unsigned int)dFps : 0;
+            int iPing = (dPing >= 0.0 && dPing <= 30000.0) ? (int)dPing : -1;
+            char szFps[16], szPing[16];
+            sprintf_s(szFps, sizeof(szFps), "%u", uiFps);
+            sprintf_s(szPing, sizeof(szPing), "%d", iPing);
+            if (iPing < 0) strcpy(szPing, "--");
+            if (dFps < 0.0) strcpy(szFps, "--");
+            sprintf_s(szResult, sizeof(szResult), "!%s's PL: %.2f%% | FPS: %s | Ping: %s ms",
+                pPlName, dLoss, szFps, szPing);
         }
         else {
             sprintf_s(szResult, sizeof(szResult), "!Packetloss bulunamadi.");
@@ -273,21 +317,109 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
 
         g_waitingForGst = false;
         Log("[GST] Sonuc dialogu yakalandi. Zone + oyuncu sayisi cikariliyor...");
-        Log("[GST-DATA] %.250s", szInfo);
+        // Dialogu TAM logla: Log buffer'i 512 byte ile sinirli, bu yuzden parcala.
+        {
+            const char *pFull = szInfo ? szInfo : "";
+            size_t nFull = strlen(pFull);
+            for(size_t off = 0; off < nFull; off += 440)
+            {
+                char szChunk[512];
+                size_t nChunk = (nFull - off) < 440 ? (nFull - off) : 440;
+                memcpy(szChunk, pFull + off, nChunk);
+                szChunk[nChunk] = 0;
+                Log("[GST-DATA] %s", szChunk);
+            }
+        }
 
-        // Anahtar kelimelerden sayi cek: "Zone" ve "Player/Oyuncu/Online"
-        int nZones = -1, nPlayers = -1;
+        // Dialog formati (logdan ornek):
+        //   {00FF00}Zones:{FFFFFF}
+        //   1. # 2
+        //   2. # 13
+        //   ...
+        // Zone sayisi = "Zones:" basligi altindaki liste satirlari (# karakteri).
+        // (Eski kod "Zone" sonrasi ilk sayiyi aliyordu -> satir numarasi 1 okunuyordu.)
+        int nZones = 0, nPlayers = -1;
         const char *pszInfo = szInfo ? szInfo : "";
-        const char *pZone = strstr(pszInfo, "Zone");
-        if(pZone) nZones = ExtractNumberAfter(pZone + 4);
-        const char *pPlay = strstr(pszInfo, "Player");
-        if(pPlay) nPlayers = ExtractNumberAfter(pPlay + 6);
-        if(nPlayers < 0) { const char *pOn = strstr(pszInfo, "Online"); if(pOn) nPlayers = ExtractNumberAfter(pOn + 6); }
-        if(nPlayers < 0) { const char *pOy = strstr(pszInfo, "Oyuncu"); if(pOy) nPlayers = ExtractNumberAfter(pOy + 6); }
+        const char *pZoneSec = strstr(pszInfo, "Zones:");
+        if(!pZoneSec) pZoneSec = strstr(pszInfo, "Zone:");
+        if(pZoneSec)
+        {
+            const char *p = pZoneSec;
+            while((p = strchr(p, '#')) != NULL)
+            {
+                nZones++;
+                p++;
+            }
+        }
+        if(nZones == 0)
+        {
+            const char *pZone = strstr(pszInfo, "Zone");
+            if(pZone) nZones = ExtractNumberAfter(pZone + 4);
+        }
+
+        // Aktif oyuncu sayisi: "Online Members:" basligi altindaki liste satirlari.
+        // ornek:
+        //   {00FF00}Online Members:{FFFFFF}
+        //   1 - .Punisher(27) - King's Hand
+        //   2 - washe(28) - Underboss
+        //   ... -> her satir bir aktif uye
+        const char *pAktif = strstr(pszInfo, "Online Members:");
+        if(pAktif)
+        {
+            nPlayers = 0;
+            const char *p = pAktif + 15; // "Online Members:" sonrasi
+            while(*p)
+            {
+                const char *pNext = strchr(p, '\n');
+                const char *pLineEnd = pNext ? pNext : (p + strlen(p));
+                size_t nLen = (size_t)(pLineEnd - p);
+                const char *pTrim = p;
+                // Satir basini trimle: renk kodunu ({RRGGBB}) ve bosluk/satirsonu karakterlerini atla.
+                // Djnat: '\n' bir satir sonudur, onu bosluk gibi atlamak bir sonraki satira akar ve
+                // ilk uyeyi 2 kez saydirir. Bu yuzden satir sonunu (pLineEnd) sinir al.
+                while(pTrim < pLineEnd)
+                {
+                    if(*pTrim == '{')
+                    {
+                        while(pTrim < pLineEnd && *pTrim != '}') pTrim++;
+                        if(pTrim < pLineEnd && *pTrim == '}') pTrim++;
+                    }
+                    else if(*pTrim == ' ' || *pTrim == '\t' || *pTrim == '\r')
+                        pTrim++;
+                    else
+                        break;
+                }
+                // Rakamla baslayan satirlar liste girdileridir ("1 - ...")
+                if(pTrim < pLineEnd && *pTrim >= '0' && *pTrim <= '9')
+                    nPlayers++;
+                else if(pTrim >= pLineEnd)
+                    { /* bos / sadece renk kodu olan satir, devam et */ }
+                else
+                    break; // rakamla baslamayan satir = sonraki bolum basligi
+                if(!pNext) break;
+                p = pNext + 1;
+            }
+        }
+        else {
+            // Fallback: "Online players", "Online", "Active", "Aktif", "Player", "Oyuncu"
+            const char *pAktif2 = strstr(pszInfo, "Online players");
+            if(!pAktif2) pAktif2 = strstr(pszInfo, "Active players");
+            if(!pAktif2) pAktif2 = strstr(pszInfo, "Online");
+            if(!pAktif2) pAktif2 = strstr(pszInfo, "Active");
+            if(!pAktif2) pAktif2 = strstr(pszInfo, "Aktif");
+            if(!pAktif2) pAktif2 = strstr(pszInfo, "Player");
+            if(!pAktif2) pAktif2 = strstr(pszInfo, "Oyuncu");
+            if(pAktif2)
+            {
+                const char *pNum = pAktif2;
+                while(*pNum && !(*pNum >= '0' && *pNum <= '9')) pNum++;
+                if(*pNum) nPlayers = atoi(pNum);
+            }
+        }
 
         // Sonucu oyunda grup sohbeti olarak goster (! ile), Discord'a gitmesin
         g_bridgeSuppressEcho++;
-        if(nZones >= 0) {
+        if(nZones > 0) {
             char szResult[256];
             if(nPlayers >= 0)
                 sprintf_s(szResult, "!Zone: %d | Aktif: %d", nZones, nPlayers);
@@ -350,6 +482,7 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
         // 20 sn içinde sonuç gelmezse bekleme flag'ini sıfırla (takılı kalmasın)
         if (g_gstatsReqTime != 0 && GetTickCount() - g_gstatsReqTime > 20000) {
             g_waitingForGStats = false;
+            g_gstatsSentFirst = false;
             std::cout << "[gstats] Bekleme zamanaşımı, flag sıfırlandı.\n";
             return 0;
         }
@@ -386,14 +519,35 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
             return 1;
         }
 
-        g_waitingForGStats = false;
-
+        // Sonuc dialogu yakalandi.
+        // /stats sunucuda iki sonuc dialogu acar: once oyuncu stats (Discord'a gider),
+        // sonra grup stats (ekran da acik kalir). Ilk sonucu Discord'a gonder, sonraki
+        // sonuc dialoglarini sadece kapat (Discord'a gonderme).
         std::cout << "[gstats yakalandi] ID: " << wDialogID << " - Baslik: " << szTitle << "\n";
-        Log("[GSTATS] Sonuc dialogu yakalandi. Discord'a gonderiliyor...");
-        Log("[GSTATS-DATA] %.250s", szInfo);
 
-        // Security.cpp üzerinden Discord VDS'e aktarma
-        SendGStatsToDiscord(szInfo);
+        if(g_gstatsHarvestMode)
+        {
+            // ?zf harvest modu: sonucu Discord'a gonderme, sadece zone rengini cikar
+            Log("[ZF:HARVEST] Sonuc dialogu isleniyor, Discord'a gitmez.");
+            HarvestParseGstatsResult(szInfo);
+            g_waitingForGStats = false;
+            g_gstatsSentFirst = false;
+        }
+        else if(!g_gstatsSentFirst)
+        {
+            Log("[GSTATS] Sonuc dialogu yakalandi. Discord'a gonderiliyor...");
+            Log("[GSTATS-DATA] %.250s", szInfo);
+
+            // Security.cpp üzerinden Discord VDS'e aktarma
+            SendGStatsToDiscord(szInfo);
+            g_gstatsSentFirst = true;
+            // flag true kalir; /stats'in ek (grup stats) sonuc dialogu da yakalanir
+        }
+        else
+        {
+            Log("[GSTATS] Ek sonuc dialogu (grup stats) yakalandi, sadece kapatiliyor.");
+            g_waitingForGStats = false;
+        }
 
         // Sonuc dialogunu ekrana cizdirmeden kapat (RakGravy davranisi: anlik ac-kapat)
         RakNet::BitStream bsResponse;
