@@ -134,6 +134,15 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 			// Zone war: son 10 sn'de otomatik /gz2 giris + GZ sonuc textdraw yakalama
 			ProcessZoneWarAutoJoin();
 
+			// ?zgo: zone bekleme suresi dolduysa eski pozisyona don
+			ProcessZgoReturn();
+
+			// Freeroam: /fr'yi sendServerCommand ile aralikli gonder (chat'e yansimaz)
+			ProcessFrRetry();
+
+			// ?zf grup tag haritasi: bilinmeyen grup tag'lerini /gstats ile sorgula
+			ProcessGroupHarvest();
+
 			// Discord grup chat kopusu: bekleyen Discord mesajlarini cek (2 sn'de bir)
 			PollDiscordChat();
 
@@ -324,11 +333,11 @@ void Log(char *fmt, ...)
 	vsprintf_s(buffer, 512, fmt, args);
 	va_end(args);
 
-	fprintf(flLog, buffer);
+	fprintf(flLog, "%s", buffer);
 
 	if(settings.iConsole)
 	{
-		printf(buffer);
+		printf("%s", buffer);
 	}
 	else
 	{

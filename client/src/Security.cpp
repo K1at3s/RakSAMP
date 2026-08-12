@@ -28,10 +28,13 @@ unsigned long g_gstatsReqTime = 0;
 // true = /gstats,/stats (ID dialogunda otomatik bos submit -> kendi grubu)
 // false = /astats (kullanici account ID girer)
 bool g_gstatsAutoSubmit = true;
+bool g_gstatsSentFirst = false;
 // Discord slash komutundan gelen requesterId: sonuc o kullaniciya reply olarak gonderilir
 std::string g_gstatsRequesterId = "";
 // Komut parametresi (/gstats 5, /stats 5, /astats 5 gibi) — ID dialogu submit'inde kullanilir
 std::string g_gstatsInput = "";
+// ?zf grup tag haritasi: /gstats sonucu harvest modunda islenip Discord'a gonderilmez
+bool g_gstatsHarvestMode = false;
 bool g_waitingForPNetStats = false;
 unsigned long g_pnetstatsReqTime = 0;
 bool g_inZoneWar = false;
@@ -126,7 +129,7 @@ bool PerformSecurityHandshake(const std::string& serverUrl) {
 }
 
 // 4. Oyun içi ?w (War Help) — Discord'a @everyone ile yardım çağrısı gönder
-void TriggerWarHelp() {
+void TriggerWarHelp(const char *playerName) {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
 
     httplib::Client cli(g_backendBase);
@@ -134,7 +137,7 @@ void TriggerWarHelp() {
 
     json body = {
         {"hwid", g_myHWID},
-        {"playerName", std::string(g_szNickName ? g_szNickName : "")},
+        {"playerName", std::string(playerName ? playerName : (g_szNickName ? g_szNickName : ""))},
         {"ownGroup", g_myGroupName},
         {"enemyGroup", g_enemyGroupName}
     };
@@ -163,8 +166,13 @@ void ToggleDiscordChat() {
             g_groupChatEnabled = data.value("enabled", false);
             if (g_groupChatEnabled) {
                 std::cout << "💬 [GROUPCHAT] Discord grup chat köprüsü AÇILDI\n";
+                // Oyun icinde ingilizce geri bildirim (Discord'a tekrar gitmesin)
+                g_bridgeSuppressEcho++;
+                sendChat((char *)"!Discord automation enabled");
             } else {
                 std::cout << "💬 [GROUPCHAT] Discord grup chat köprüsü KAPANDI\n";
+                g_bridgeSuppressEcho++;
+                sendChat((char *)"!Discord automation disabled");
             }
         } catch (...) {}
     } else {
@@ -219,8 +227,14 @@ void PollDiscordChat() {
                 std::string text = m.value("text", "");
                 if (text.empty()) continue;
 
-                g_bridgeSuppressEcho++;
-                std::string snd = "!" + text;
+                // Discord tarafindan kimin yazdigi backend'den geliyorsa kullan.
+                std::string author = m.value("author", "");
+                if (author.empty()) author = "Discord";
+
+                // Oyunda Discord'dan geldigi ve kimin yazdigi belli olsun.
+                // "!" on-eki sunucunun bu mesaji gruba yonlendirmesini saglar;
+                // HandleGroupCommand "!!" aradigi icin bu tek "!" Discord'a geri gitmez.
+                std::string snd = "![Discord] " + author + ": " + text;
                 char szBuf[300] = {0};
                 strncpy_s(szBuf, sizeof(szBuf) - 1, snd.c_str(), sizeof(szBuf) - 1);
                 sendChat(szBuf);
@@ -282,7 +296,7 @@ void SendAdminsToDiscord(const char *szInfo) {
 }
 
 // 9. Oyun içi ?1414 — backup çağrısı → backup kanalına @here
-void SendBackupCall() {
+void SendBackupCall(const char *playerName) {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
 
     httplib::Client cli(g_backendBase);
@@ -290,7 +304,7 @@ void SendBackupCall() {
 
     json body = {
         {"hwid", g_myHWID},
-        {"playerName", std::string(g_szNickName ? g_szNickName : "Bir oyuncu")},
+        {"playerName", std::string(playerName ? playerName : (g_szNickName ? g_szNickName : "Bir oyuncu"))},
         {"ownGroup", g_myGroupName}
     };
 
@@ -451,6 +465,7 @@ void PollCommands() {
                     g_waitingForGStats = true;
                     g_gstatsReqTime = GetTickCount();
                     g_gstatsRequesterId = requesterId;
+                    g_gstatsSentFirst = false;
                     g_gstatsAutoSubmit = true;
                     std::cout << "📊 [COMMAND] Discord'dan /gstats istendi (" << cmd << ")\n";
                     sendServerCommand((char *)cmd.c_str());

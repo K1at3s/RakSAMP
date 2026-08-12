@@ -52,6 +52,339 @@ static bool g_zwKillListSent = false;       // sonuç zaten gönderildi mi
 static DWORD g_zwCaptureStart = 0;          // toplama başlangıcı
 static std::string g_zwKillListText;        // birikmiş sonuç metni
 
+// Gang zone yakalayıcı: UIF zone numaraları haritanın üst solundan (Tierra Robada)
+// başlayarak #0'dan itibaren sıralı oluşturulur -> gang zone ID == zone # kabul edilir.
+// RPC_ScrAddGangZone (108) geldikçe koordinatlar buraya kaydedilir (?zgo için).
+#define MAX_GANG_ZONES 2048
+static float g_zoneMinX[MAX_GANG_ZONES];
+static float g_zoneMinY[MAX_GANG_ZONES];
+static float g_zoneMaxX[MAX_GANG_ZONES];
+static float g_zoneMaxY[MAX_GANG_ZONES];
+static unsigned int g_zoneColor[MAX_GANG_ZONES];
+static bool g_zoneFlash[MAX_GANG_ZONES];
+static int g_zoneCount = 0;
+
+// ?zgo: bot zone'a isinlanip 40 sn bekler, sonra eski pozisyonuna doner.
+#define ZGO_STAY_MS 40000
+#define ZGO_TELEPORT_Z 1000.0f  // yerin dibine isinlanmasin diye havada asili kalsin
+static bool g_zgoActive = false;            // isinlama + bekleme aktif mi
+static DWORD g_zgoReturnTick = 0;           // geri donus zamani
+static float g_zgoReturnPos[3] = {0, 0, 0}; // donulecek (spawn) pozisyon
+static int g_zgoZoneId = -1;                // hedef zone (geri donus bildirimi icin)
+
+// Freeroam'a gecis: spawn sonrasi /fr'yi tek sefer gonder (sendServerCommand ile, chat'e yansimaz).
+// Retry devre disi (cmd mute riski). Spawn menusu ("Where would you like to go?") ScrDialogBox'da
+// "Freeroam" satiri otomatik secilir; diger diyaloglar AUTOCLOSE ile kapanir (bak. ScrDialogBox).
+void StartFrRetry()
+{
+	// Devre disi (retry yok).
+}
+
+void ProcessFrRetry()
+{
+	// Devre disi (retry yok).
+}
+
+// Spawn menusu ("Where would you like to go?") son otomatik secilme zamani.
+static DWORD g_dwSpawnMenuHandled = 0;
+
+// -------------------------------------------------------------
+// ?zf GRUP TAG HARITASI (renk -> grup tag'i)
+// YS botun "Flashing Zones: Tag(n) | ..." mesajlarindan tag'ler toplanir;
+// her tag icin tek tek /gstats sorgulanir, sonuctaki zone listesinin renklerinden
+// grup rengi ogrenilir ve group_colors.txt'ye kalici kaydedilir. ?zf bu haritayi
+// kullanarak flashing zone'lari grup taglarina gore gruplar ve sayar.
+// -------------------------------------------------------------
+#define MAX_GROUP_COLORS 128
+#define MAX_SEEN_TAGS 256
+static struct { unsigned int uiColor; char szTag[64]; } g_groupColors[MAX_GROUP_COLORS];
+static int g_groupColorCount = 0;
+static char g_seenTags[MAX_SEEN_TAGS][64];
+static int g_seenTagCount = 0;
+static int g_harvestIdx = 0;
+static DWORD g_lastHarvestTime = 0;
+static bool g_harvestInFlight = false;   // /gstats sorgusu sonucu bekleniyor
+static char g_harvestTag[64] = {0};      // sorgulanan tag
+static const char *g_szColorsFile = "group_colors.txt";
+
+static int FindGroupColorByTag(const char *szTag)
+{
+	if(!szTag) return -1;
+	for(int i = 0; i < g_groupColorCount; i++)
+		if(!_stricmp(g_groupColors[i].szTag, szTag)) return i;
+	return -1;
+}
+
+static int FindGroupColorByColor(unsigned int uiColor)
+{
+	for(int i = 0; i < g_groupColorCount; i++)
+		if(g_groupColors[i].uiColor == uiColor) return i;
+	return -1;
+}
+
+static void LoadGroupColors()
+{
+	g_groupColorCount = 0;
+	FILE *f = fopen(g_szColorsFile, "r");
+	if(f)
+	{
+		char szLine[160];
+		while(fgets(szLine, sizeof(szLine), f) && g_groupColorCount < MAX_GROUP_COLORS)
+		{
+			unsigned int uiC = 0; char szTag[96] = {0};
+			if(sscanf(szLine, "%x %95s", &uiC, szTag) == 2 && uiC != 0 && szTag[0])
+			{
+				g_groupColors[g_groupColorCount].uiColor = uiC;
+				strncpy_s(g_groupColors[g_groupColorCount].szTag, sizeof(g_groupColors[0].szTag),
+					szTag, sizeof(g_groupColors[0].szTag) - 1);
+				g_groupColorCount++;
+			}
+		}
+		fclose(f);
+	}
+	Log("[ZF] %d grup rengi dosyadan yuklendi.", g_groupColorCount);
+}
+
+static void SaveGroupColors()
+{
+	FILE *f = fopen(g_szColorsFile, "w");
+	if(f)
+	{
+		for(int i = 0; i < g_groupColorCount; i++)
+			fprintf(f, "%08X %s\n", g_groupColors[i].uiColor, g_groupColors[i].szTag);
+		fclose(f);
+	}
+	Log("[ZF] %d grup rengi dosyaya kaydedildi.", g_groupColorCount);
+}
+
+static void AddSeenTag(const char *szTag)
+{
+	if(!szTag || !*szTag) return;
+	for(int i = 0; i < g_seenTagCount; i++)
+		if(!_stricmp(g_seenTags[i], szTag)) return;
+	if(g_seenTagCount < MAX_SEEN_TAGS)
+	{
+		strncpy_s(g_seenTags[g_seenTagCount], sizeof(g_seenTags[0]), szTag, sizeof(g_seenTags[0]) - 1);
+		g_seenTagCount++;
+	}
+}
+
+static const char *TagForZone(int iZone)
+{
+	if(iZone < 0 || iZone >= MAX_GANG_ZONES) return NULL;
+	unsigned int uiColor = g_zoneColor[iZone];
+	if(uiColor == 0) return NULL;
+	int idx = FindGroupColorByColor(uiColor);
+	return idx >= 0 ? g_groupColors[idx].szTag : NULL;
+}
+
+// YS bot "Flashing Zones: ..." mesajindaki Tag(n) ciftlerini toparlar
+static void AddFlashTags(const char *pMsg)
+{
+	const char *pStart = pMsg ? strstr(pMsg, "Flashing Zones:") : NULL;
+	if(!pStart) return;
+	const char *p = pStart + strlen("Flashing Zones:");
+	while(p && *p)
+	{
+		while(*p && (*p == ' ' || *p == '|' || *p == '\t')) p++;
+		if(!*p) break;
+		char szTok[128]; int n = 0;
+		while(*p && *p != '|' && n < 120)
+		{
+			if(*p == '{') { while(*p && *p != '}') p++; if(*p) p++; continue; }
+			szTok[n++] = *p; p++;
+		}
+		szTok[n] = 0;
+		while(n > 0 && (szTok[n-1] == ' ' || szTok[n-1] == '\t')) { szTok[--n] = 0; }
+		char *paren = strchr(szTok, '(');
+		if(paren) *paren = 0;
+		// "Free" sahipsiz/nötr zone'lari temsil eder (grup degil) -> harita disi.
+		if(strlen(szTok) > 1 && _stricmp(szTok, "Free") != 0)
+			AddSeenTag(szTok);
+	}
+}
+
+// /gstats <tag> sorgusunun sonucu: zone listesini rengine cevirip grup rengini ogrenir
+void HarvestParseGstatsResult(const char *szInfo)
+{
+	if(!szInfo || !g_harvestTag[0]) return;
+
+	const char *pZone = strstr(szInfo, "Zones:");
+	if(!pZone)
+	{
+		Log("[ZF:HARVEST] '%s' sonucunda 'Zones:' bolumu yok, atlaniyor.", g_harvestTag);
+		return; // sonuc dialogu gelmeye devam edebilir; harita almadan bekle
+	}
+
+	// zone id + renk histogramini cikar
+	struct { unsigned int c; int n; } hist[128];
+	int histCount = 0, nZones = 0;
+	const char *p = pZone;
+	while((p = strstr(p, "# ")) != NULL)
+	{
+		int id = atoi(p + 1);
+		if(id >= 0 && id < MAX_GANG_ZONES)
+		{
+			unsigned int c = g_zoneColor[id];
+			if(c != 0)
+			{
+				int h = 0;
+				for(; h < histCount; h++) if(hist[h].c == c) break;
+				if(h == histCount && histCount < 128) { hist[histCount].c = c; hist[histCount].n = 0; histCount++; }
+				if(h < histCount) hist[h].n++;
+				nZones++;
+			}
+		}
+		p += 2;
+	}
+
+	unsigned int uiBest = 0; int nBest = 0;
+	for(int h = 0; h < histCount; h++)
+		if(hist[h].n > nBest) { nBest = hist[h].n; uiBest = hist[h].c; }
+
+	if(uiBest != 0 && FindGroupColorByColor(uiBest) < 0 && g_groupColorCount < MAX_GROUP_COLORS)
+	{
+		g_groupColors[g_groupColorCount].uiColor = uiBest;
+		strncpy_s(g_groupColors[g_groupColorCount].szTag, sizeof(g_groupColors[0].szTag),
+			g_harvestTag, sizeof(g_groupColors[0].szTag) - 1);
+		g_groupColorCount++;
+		SaveGroupColors();
+		Log("[ZF:HARVEST] '%s' rengi ogrenildi: 0x%08X (%d zone)", g_harvestTag, uiBest, nZones);
+	}
+	else
+	{
+		Log("[ZF:HARVEST] '%s' icin renk cikarilamadi (zone rengi bulunamadi, %d zone islendi).",
+			g_harvestTag, nZones);
+	}
+
+	g_harvestInFlight = false;
+	g_gstatsHarvestMode = false;
+}
+
+// Sira ile bilinmeyen tag'leri /gstats ile sorgular (cmd mute korumasi: 90 sn aralik)
+void CreateGroupHarvest()
+{
+	g_harvestIdx = 0;
+	ProcessGroupHarvest();
+}
+
+void ProcessGroupHarvest()
+{
+	static bool bColorsLoaded = false;
+	if(!bColorsLoaded)
+	{
+		bColorsLoaded = true;
+		LoadGroupColors();
+	}
+
+	if(!iSpawned) return;
+	if(g_inZoneWar) return;             // savas sirasinda sorgu yok
+	if(g_groupColorCount >= MAX_GROUP_COLORS) return;
+
+	DWORD dwNow = GetTickCount();
+
+	// Devam eden sorgu zaman asimi -> flag temizle, sonraki pencereyi bekle
+	if(g_harvestInFlight && dwNow - g_lastHarvestTime > 25000)
+	{
+		g_harvestInFlight = false;
+		g_gstatsHarvestMode = false;
+		g_lastHarvestTime = dwNow - 84000;
+		Log("[ZF:HARVEST] Sorgu zaman asimi, flag temizlendi.");
+	}
+	if(g_harvestInFlight) return;
+	if(g_lastHarvestTime != 0 && dwNow - g_lastHarvestTime < 90000)
+		return;
+
+	// Hic tag gormediysek (YS bot mesaji henuz gelmedi) sorgu baslatma
+	if(g_seenTagCount == 0) return;
+
+	// O siradaki henuz rengi bilinmeyen tag
+	char szNext[64] = {0};
+	for(int k = 0; k < g_seenTagCount && !szNext[0]; k++)
+	{
+		int idx = (g_harvestIdx + k) % g_seenTagCount;
+		if(FindGroupColorByTag(g_seenTags[idx]) < 0)
+		{
+			strncpy_s(szNext, sizeof(szNext), g_seenTags[idx], sizeof(szNext) - 1);
+			g_harvestIdx = idx + 1;
+		}
+	}
+	if(!szNext[0])
+	{
+		Log("[ZF:HARVEST] Bilinmeyen tag kalmadi (%d tag haritalandi).", g_groupColorCount);
+		g_lastHarvestTime = dwNow; // tamam, tekrar denemesin
+		return;
+	}
+
+	g_harvestInFlight = true;
+	g_lastHarvestTime = dwNow;
+	strncpy_s(g_harvestTag, sizeof(g_harvestTag), szNext, sizeof(g_harvestTag) - 1);
+
+	g_gstatsHarvestMode = true;
+	g_gstatsAutoSubmit = true;
+	g_gstatsInput = szNext;
+	g_waitingForGStats = true;
+	g_gstatsReqTime = GetTickCount();
+	g_gstatsSentFirst = false;
+	Log("[ZF:HARVEST] '%s' icin /gstats gonderiliyor (cmd mute icin 90 sn aralik).", szNext);
+	sendServerCommand((char *)"/gstats");
+}
+
+// ?zf: flashing zone'lari grup tag'larina gore sayip gruba bildirir (YS bot gibi)
+void BuildFlashZoneSummary()
+{
+	struct { unsigned int c; int n; } agg[256];
+	int aggCount = 0, total = 0;
+	for(int zid = 0; zid < MAX_GANG_ZONES; zid++)
+	{
+		if(!g_zoneFlash[zid]) continue;
+		unsigned int c = g_zoneColor[zid];
+		if(c == 0) continue;
+		int a = 0;
+		for(; a < aggCount; a++) if(agg[a].c == c) break;
+		if(a == aggCount && aggCount < 256) { agg[aggCount].c = c; agg[aggCount].n = 0; aggCount++; }
+		if(a < aggCount) { agg[a].n++; total++; }
+	}
+
+	// count'a gore buyukten kucuge
+	for(int i = 0; i < aggCount; i++)
+		for(int j = i + 1; j < aggCount; j++)
+			if(agg[j].n > agg[i].n)
+			{
+				unsigned int tc = agg[i].c; int tn = agg[i].n;
+				agg[i].c = agg[j].c; agg[i].n = agg[j].n;
+				agg[j].c = tc; agg[j].n = tn;
+			}
+
+	char szOut[512]; int nOut = 0;
+	nOut += sprintf_s(szOut + nOut, sizeof(szOut) - nOut, "!Flashing Zones: ");
+
+	// renk bilinmiyorsa "Free" (sahipsiz/nötr), biliniyorsa grup tag'i
+	char szOne[256]; bool bFirst = true;
+	for(int a = 0; a < aggCount; a++)
+	{
+		int idx = FindGroupColorByColor(agg[a].c);
+		const char *pszLabel = idx >= 0 ? g_groupColors[idx].szTag : "Free";
+		int nL = sprintf_s(szOne, sizeof(szOne), "%s%s(%d)", bFirst ? "" : " | ", pszLabel, agg[a].n);
+		bFirst = false;
+		if(nOut + nL >= (int)sizeof(szOut))
+		{
+			g_bridgeSuppressEcho++;
+			Log("[ZF] Parca: %s", szOut);
+			sendChat(szOut);
+			nOut = 0;
+		}
+		nOut += sprintf_s(szOut + nOut, sizeof(szOut) - nOut, "%s", szOne);
+	}
+	if(nOut > 0)
+	{
+		g_bridgeSuppressEcho++;
+		Log("[ZF] Dagilim: %s", szOut);
+		sendChat(szOut);
+	}
+	Log("[ZF] Toplam %d flashing zone (gorunen bolge).", total);
+}
+
 void ServerJoin(RPCParameters *rpcParams)
 {
 	if(!iGameInited) return;
@@ -484,11 +817,12 @@ void ClientMessage(RPCParameters *rpcParams)
 				const char *pName = pZoneMsg + 9;
 				while(*pName == ' ') pName++;
 
-				// Mesaj sonuna kadar ismi kopyala
+				// Grup adi, action kelimesinden ("keeps zone", "takes over", ...)
+				// ONCEKI kisimdir. Ornek: "ZONE WAR: swan of gours takes over zone '# 222'"
+				// -> "swan of gours". pTail bu keyword'un basina isaret eder.
 				std::string strLearned;
-				const char *p = pName;
-				while(*p && *p != '\r' && *p != '\n')
-					strLearned += *p++;
+				if(pTail && pTail > pName)
+					strLearned.assign(pName, (size_t)(pTail - pName));
 
 				// Sondaki bosluklari temizle
 				while(!strLearned.empty() && strLearned[strLearned.size()-1] == ' ')
@@ -629,20 +963,102 @@ void ClientMessage(RPCParameters *rpcParams)
 					g_knownGroupMembers[iSenderId] = 1;
 			}
 
-			if(iSenderId != g_myPlayerID) return; // sadece kendi komutlarimiz
+			// Bot kendi sendChat ile gonderdigi mesaji (GROUP) olarak echo
+			// edilirse tekrar islenmesin (cevap/otomatik mesajlar).
+			// NOT: Oyun ici (GTA SA) sohbet kutusundan yazilan mesajlar sunucu
+			// tarafindan gonderan oyuncunun ID'siyle yayinlanir. Kullanici
+			// bot hesabi (hakixld) degil, oyun hesabiyla (orn. washe) yazdigi
+			// icin iSenderId != g_myPlayerID olur. Bu yuzden sadece bot'un
+			// KENDI echo'larini engelliyoruz, diger grup uyelerinin mesajlarini
+			// HandleGroupCommand'e veriyoruz.
+			if(iSenderId == g_myPlayerID) return;
 
-			// --- ?w : Discord war help, 120 sn cooldown (RakGravy ile ayni) ---
-			if(!strncmp(pGroupMsg, "?w", 2) && (pGroupMsg[2] == '\0' || pGroupMsg[2] == ' '))
+			// Sunucu kendi mesajimizi (GROUP) olarak geri echo etmedigi icin komut
+			// mantigi HandleGroupCommand'e tasindi (konsol inputu RunCommand'den de cagrilir).
+			HandleGroupCommand(pGroupMsg, iSenderId);
+		}
+	}
+}
+
+// Grup chat komutlarini lokal isler (?help, ?w, ?ping, ?pl, ?gst, ?gstats,
+// ?greet, ?welcomemsg, ?gzt, ?discordchat, ?1414, ?gz ve !<mesaj>).
+// Sunucu kendi mesajini (GROUP) olarak geri echo etmedigi icin bu mantik hem
+// ClientMessage yakalamasindan hem de RunCommand (konsol inputu) icin cagrilir.
+// iSenderId < 0 ise konsol/gelen sender yok anlaminda g_myPlayerID varsayilir.
+void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
+{
+			// YS botun "Flashing Zones:" mesajlari: grup tag'lerini topla (harvest icin).
+			if(strstr(pGroupMsg, "Flashing Zones:"))
+			{
+				AddFlashTags(pGroupMsg);
+				Log("[ZF] YS flash mesaji: %s", pGroupMsg);
+				return; // normal komut islemine sokma
+			}
+
+			int iCmdSender = iSenderId;
+			if(iCmdSender < 0 || iCmdSender >= MAX_PLAYERS)
+				iCmdSender = g_myPlayerID;
+
+			// Komutu kullananin oyun ici adi (?w, ?1414, ?pl icin Discord'a isim gider).
+			const char *pCmdSenderName = "";
+			if(playerInfo[iCmdSender].iIsConnected && playerInfo[iCmdSender].szPlayerName[0])
+				pCmdSenderName = playerInfo[iCmdSender].szPlayerName;
+			else
+				pCmdSenderName = g_szNickName;
+
+			// --- ?help : komut listesini oyunda goster (Discord'a gitmez) ---
+			if(!strncmp(pGroupMsg, "?help", 5) && (pGroupMsg[5] == '\0' || pGroupMsg[5] == ' '))
+			{
+				Log("[HELP] ?help yakalandi, komut listesi gonderiliyor.");
+				g_bridgeSuppressEcho++;
+				sendChat((char *)"!Komutlar: ?w ?ping ?pl [id] ?gst ?az ?gstats ?act ?gzt ?gz ?gz2 ?za ?zattack ?zlist ?zwho ?zscan ?zf ?zgo ?1414");
+				g_bridgeSuppressEcho++;
+				sendChat((char *)"!Ayarlar: ?greet ?welcomemsg ?gm <mesaj> ?discordchat");
+				g_bridgeSuppressEcho++;
+				sendChat((char *)"!Bilgi: ?info ?disc ?test ?m ?astats <id> ?alogs <id>");
+				g_bridgeSuppressEcho++;
+				sendChat((char *)"!Discord'a mesaj: !<mesaj> yaz");
+				g_bridgeSuppressEcho++;
+				sendChat((char *)"!Nasil: ?help");
+			}
+			// --- ?test : baglanti kontrolu, bot cevap verir ---
+			else if(!strncmp(pGroupMsg, "?test", 5) && (pGroupMsg[5] == '\0' || pGroupMsg[5] == ' '))
+			{
+				Log("[TEST] ?test yakalandi, cevap gonderiliyor.");
+				g_bridgeSuppressEcho++;
+				sendChat((char *)"!Bot calisiyor. ?help ile komutlari gor.");
+			}
+			// --- ?info : bot surum bilgisi ---
+			else if(!strncmp(pGroupMsg, "?info", 5) && (pGroupMsg[5] == '\0' || pGroupMsg[5] == ' '))
+			{
+				Log("[INFO] ?info yakalandi.");
+				g_bridgeSuppressEcho++;
+				sendChat((char *)"!RakSAMP bot v1.0 - ?help ile komut listesi");
+			}
+			// --- ?disc : Discord sunucu linki ---
+			else if(!strncmp(pGroupMsg, "?disc", 5) && (pGroupMsg[5] == '\0' || pGroupMsg[5] == ' '))
+			{
+				Log("[DISC] ?disc yakalandi.");
+				g_bridgeSuppressEcho++;
+				sendChat((char *)"!Discord: uifserver.net/discord");
+			}
+			// --- ?w : Discord war help, 30 sn cooldown (E1 ile ayni) ---
+			else if(!strncmp(pGroupMsg, "?w", 2) && (pGroupMsg[2] == '\0' || pGroupMsg[2] == ' '))
 			{
 				DWORD dwNow = GetTickCount();
-				if(g_lastWarHelpTime != 0 && (dwNow - g_lastWarHelpTime) < 120000)
+				if(g_lastWarHelpTime != 0 && (dwNow - g_lastWarHelpTime) < 30000)
 				{
-					Log("[WARHELP] Cooldown aktif (%lu sn kaldi), ?w yoksayildi.", (120000 - (dwNow - g_lastWarHelpTime)) / 1000);
+					int iLeft = (int)((30000 - (dwNow - g_lastWarHelpTime)) / 1000);
+					char szCd[128];
+					sprintf_s(szCd, sizeof(szCd), "!Cooldown: %d sn kaldi (?w)", iLeft);
+					Log("[WARHELP] Cooldown aktif (%d sn kaldi), ?w yoksayildi.", iLeft);
+					g_bridgeSuppressEcho++;
+					sendChat(szCd);
 					return;
 				}
 				g_lastWarHelpTime = dwNow;
-				Log("[WARHELP] Grup chat'inde ?w yakalandi. Discord'a gonderiliyor...");
-				TriggerWarHelp();
+				Log("[WARHELP] Grup chat'inde ?w yakalandi. %s Discord'a gonderiliyor...", pCmdSenderName);
+				TriggerWarHelp(pCmdSenderName);
 			}
 			// --- ?ping : yanit verir, 30 sn cooldown (RakGravy ile ayni) ---
 			if(!strncmp(pGroupMsg, "?ping", 5) && (pGroupMsg[5] == '\0' || pGroupMsg[5] == ' '))
@@ -650,11 +1066,17 @@ void ClientMessage(RPCParameters *rpcParams)
 				DWORD dwNow = GetTickCount();
 				if(g_lastPingTime != 0 && (dwNow - g_lastPingTime) < 30000)
 				{
-					Log("[PING] Cooldown aktif, ?ping yoksayildi.");
+					int iLeft = (int)((30000 - (dwNow - g_lastPingTime)) / 1000);
+					char szCd[128];
+					sprintf_s(szCd, sizeof(szCd), "!Cooldown: %d sn kaldi (?ping)", iLeft);
+					Log("[PING] Cooldown aktif (%d sn kaldi), ?ping yoksayildi.", iLeft);
+					g_bridgeSuppressEcho++;
+					sendChat(szCd);
 					return;
 				}
 				g_lastPingTime = dwNow;
 				Log("[PING] ?ping yakalandi, Pong cevabi gonderiliyor.");
+				g_bridgeSuppressEcho++;
 				sendChat((char *)"!Pong!");
 			}
 			// --- ?pl [id] : /pnetstats dialogundan packetloss, 30 sn cooldown ---
@@ -663,7 +1085,12 @@ void ClientMessage(RPCParameters *rpcParams)
 				DWORD dwNow = GetTickCount();
 				if(g_lastPLTime != 0 && (dwNow - g_lastPLTime) < 30000)
 				{
-					Log("[PNETSTATS] Cooldown aktif, ?pl yoksayildi.");
+					int iLeft = (int)((30000 - (dwNow - g_lastPLTime)) / 1000);
+					char szCd[128];
+					sprintf_s(szCd, sizeof(szCd), "!Cooldown: %d sn kaldi (?pl)", iLeft);
+					Log("[PNETSTATS] Cooldown aktif (%d sn kaldi), ?pl yoksayildi.", iLeft);
+					g_bridgeSuppressEcho++;
+					sendChat(szCd);
 					return;
 				}
 				g_lastPLTime = dwNow;
@@ -691,13 +1118,19 @@ void ClientMessage(RPCParameters *rpcParams)
 				Log("[PNETSTATS] /pnetstats gonderiliyor (hedef: %d)...", iTarget);
 				sendServerCommand(szCmd);
 			}
-			// --- ?gst : /gstats dialogundan zone + aktif oyuncu sayisini oyunda goster (Discord'a gitmez) ---
-			else if(!strncmp(pGroupMsg, "?gst", 4) && (pGroupMsg[4] == '\0' || pGroupMsg[4] == ' '))
+			// --- ?gst / ?az : /gstats dialogundan zone + aktif oyuncu sayisini oyunda goster (Discord'a gitmez) ---
+			else if((!strncmp(pGroupMsg, "?gst", 4) && (pGroupMsg[4] == '\0' || pGroupMsg[4] == ' '))
+			     || (!strncmp(pGroupMsg, "?az", 3) && (pGroupMsg[3] == '\0' || pGroupMsg[3] == ' ')))
 			{
 				DWORD dwNow = GetTickCount();
 				if(g_lastGStatsTime != 0 && (dwNow - g_lastGStatsTime) < 30000)
 				{
-					Log("[GST] Cooldown aktif, ?gst yoksayildi.");
+					int iLeft = (int)((30000 - (dwNow - g_lastGStatsTime)) / 1000);
+					char szCd[128];
+					sprintf_s(szCd, sizeof(szCd), "!Cooldown: %d sn kaldi (?gst)", iLeft);
+					Log("[GST] Cooldown aktif (%d sn kaldi), ?gst yoksayildi.", iLeft);
+					g_bridgeSuppressEcho++;
+					sendChat(szCd);
 					return;
 				}
 				g_lastGStatsTime = dwNow;
@@ -707,19 +1140,26 @@ void ClientMessage(RPCParameters *rpcParams)
 				Log("[GST] /gstats gonderiliyor (zone + aktif oyuncu sayisi icin)...");
 				sendServerCommand((char *)"/gstats");
 			}
-			// --- ?gstats : /gstats dialogunu Discord'a yolla, 30 sn cooldown ---
-			else if(!strncmp(pGroupMsg, "?gstats", 7) && (pGroupMsg[7] == '\0' || pGroupMsg[7] == ' '))
+			// --- ?gstats / ?act : /gstats dialogunu Discord'a yolla, 30 sn cooldown ---
+			else if((!strncmp(pGroupMsg, "?gstats", 7) && (pGroupMsg[7] == '\0' || pGroupMsg[7] == ' '))
+			     || (!strncmp(pGroupMsg, "?act", 4) && (pGroupMsg[4] == '\0' || pGroupMsg[4] == ' ')))
 			{
 				DWORD dwNow = GetTickCount();
 				if(g_lastGStatsTime != 0 && (dwNow - g_lastGStatsTime) < 30000)
 				{
-					Log("[GSTATS] Cooldown aktif, ?gstats yoksayildi.");
+					int iLeft = (int)((30000 - (dwNow - g_lastGStatsTime)) / 1000);
+					char szCd[128];
+					sprintf_s(szCd, sizeof(szCd), "!Cooldown: %d sn kaldi (?gstats)", iLeft);
+					Log("[GSTATS] Cooldown aktif (%d sn kaldi), ?gstats yoksayildi.", iLeft);
+					g_bridgeSuppressEcho++;
+					sendChat(szCd);
 					return;
 				}
 				g_lastGStatsTime = dwNow;
 
 				g_waitingForGStats = true;
 				g_gstatsReqTime = GetTickCount();
+				g_gstatsSentFirst = false;
 				Log("[GSTATS] /gstats gonderiliyor...");
 				sendServerCommand((char *)"/gstats");
 			}
@@ -747,13 +1187,36 @@ void ClientMessage(RPCParameters *rpcParams)
 					SetWelcomeMessage(szMsg);
 				}
 			}
+			// --- ?gm <mesaj> : ?welcomemsg alias (E1 uyumlu) ---
+			else if(!strncmp(pGroupMsg, "?gm", 3) && (pGroupMsg[3] == '\0' || pGroupMsg[3] == ' '))
+			{
+				const char *pArg = pGroupMsg + 3;
+				while(*pArg == ' ') pArg++;
+				if(*pArg == '\0')
+				{
+					Log("[WELCOME] ?gm icin mesaj bos, ayar siliniyor.");
+					SetWelcomeMessage("");
+				}
+				else
+				{
+					char szMsg[256] = {0};
+					strncpy_s(szMsg, sizeof(szMsg) - 1, pArg, sizeof(szMsg) - 1);
+					Log("[WELCOME] ?gm ayarlaniyor: %s", szMsg);
+					SetWelcomeMessage(szMsg);
+				}
+			}
 			// --- ?gzt : zone war timer — chat duyurusundan hesaplanan kalan sureyi gruba bildir ---
 			else if(!strncmp(pGroupMsg, "?gzt", 4) && (pGroupMsg[4] == '\0' || pGroupMsg[4] == ' '))
 			{
 				DWORD dwNow = GetTickCount();
 				if(g_lastGztTime != 0 && (dwNow - g_lastGztTime) < 30000)
 				{
-					Log("[GZT] Cooldown aktif, ?gzt yoksayildi.");
+					int iLeft = (int)((30000 - (dwNow - g_lastGztTime)) / 1000);
+					char szCd[128];
+					sprintf_s(szCd, sizeof(szCd), "!Cooldown: %d sn kaldi (?gzt)", iLeft);
+					Log("[GZT] Cooldown aktif (%d sn kaldi), ?gzt yoksayildi.", iLeft);
+					g_bridgeSuppressEcho++;
+					sendChat(szCd);
 					return;
 				}
 				g_lastGztTime = dwNow;
@@ -768,12 +1231,14 @@ void ClientMessage(RPCParameters *rpcParams)
 					char szWarTime[192];
 					sprintf_s(szWarTime, sizeof(szWarTime), "!War time: %d:%02d", iMin, iSec);
 					Log("[GZT] Kalan sure hesaplandi: %d:%02d", iMin, iSec);
+					g_bridgeSuppressEcho++;
 					sendChat(szWarTime);
 				}
 				else
 				{
 					// Savas baslangici bilinmiyor ya da coktan bitti.
 					Log("[GZT] Savas baslangici yok, War time bilgisi gonderilemiyor.");
+					g_bridgeSuppressEcho++;
 					sendChat((char *)"!War time: yok");
 				}
 			}
@@ -783,18 +1248,151 @@ void ClientMessage(RPCParameters *rpcParams)
 				Log("[GROUPCHAT] ?discordchat komutu yakalandi, durum degistiriliyor...");
 				ToggleDiscordChat();
 			}
-			// --- ?1414 : backup cagrisi → Discord backup kanalina @here, 60 sn cooldown ---
-			else if(!strncmp(pGroupMsg, "?1414", 5) && (pGroupMsg[5] == '\0' || pGroupMsg[5] == ' '))
+			// --- ?m : game-modes listesi sunucuya sor ---
+			else if(!strncmp(pGroupMsg, "?m", 2) && (pGroupMsg[2] == '\0' || pGroupMsg[2] == ' '))
 			{
+				Log("[MODES] ?m yakalandi, /gamemodes gonderiliyor.");
+				sendServerCommand((char *)"/gamemodes");
+			}
+			// --- ?astats <id> : account stats sunucuya sor ---
+			else if(!strncmp(pGroupMsg, "?astats", 7) && (pGroupMsg[7] == ' ' || pGroupMsg[7] != '\0'))
+			{
+				Log("[ASTATS] ?astats yakalandi.");
+				char szCmd[64];
+				sprintf_s(szCmd, sizeof(szCmd), "/astats %s", pGroupMsg + 7);
+				sendServerCommand(szCmd);
+			}
+			// --- ?alogs <id> : admin loglari sunucuya sor ---
+			else if(!strncmp(pGroupMsg, "?alogs", 6) && (pGroupMsg[6] == ' ' || pGroupMsg[6] != '\0'))
+			{
+				Log("[ALOGS] ?alogs yakalandi.");
+				char szCmd[64];
+				sprintf_s(szCmd, sizeof(szCmd), "/alogs %s", pGroupMsg + 6);
+				sendServerCommand(szCmd);
+			}
+			// --- ?grole <id> <rol> : grup uye rolunu ayarla (sunucuya ilet) ---
+			else if(!strncmp(pGroupMsg, "?grole", 6) && (pGroupMsg[6] == ' ' || pGroupMsg[6] != '\0'))
+			{
+				Log("[GROLE] ?grole yakalandi.");
+				char szCmd[64];
+				sprintf_s(szCmd, sizeof(szCmd), "/grouprole %s", pGroupMsg + 6);
+				sendServerCommand(szCmd);
+			}
+			// --- ?post <neden> : rol degisikligine gerekce ekle (sunucuya ilet) ---
+			else if(!strncmp(pGroupMsg, "?post", 5) && (pGroupMsg[5] == ' ' || pGroupMsg[5] != '\0'))
+			{
+				Log("[POST] ?post yakalandi.");
+				char szCmd[128];
+				sprintf_s(szCmd, sizeof(szCmd), "/rankreason %s", pGroupMsg + 5);
+				sendServerCommand(szCmd);
+			}
+			// --- ?tag <tag> <yeni> : grup zone tagini duzelt (sunucuya ilet) ---
+			else if(!strncmp(pGroupMsg, "?tag", 4) && (pGroupMsg[4] == ' ' || pGroupMsg[4] != '\0'))
+			{
+				Log("[TAG] ?tag yakalandi.");
+				char szCmd[128];
+				sprintf_s(szCmd, sizeof(szCmd), "/groupzonetag %s", pGroupMsg + 4);
+				sendServerCommand(szCmd);
+			}
+			// --- ?zlist / ?zwho / ?zscan : zone bilgisi → /gzinfo (hangi grup, ne zaman bosalir, # ile) ---
+			else if((!strncmp(pGroupMsg, "?zlist", 6) && (pGroupMsg[6] == '\0' || pGroupMsg[6] == ' '))
+			     || (!strncmp(pGroupMsg, "?zwho", 5) && (pGroupMsg[5] == '\0' || pGroupMsg[5] == ' '))
+			     || (!strncmp(pGroupMsg, "?zscan", 6) && (pGroupMsg[6] == '\0' || pGroupMsg[6] == ' ')))
+			{
+				Log("[ZONE] %s yakalandi, /gzinfo gonderiliyor.", pGroupMsg);
+				sendServerCommand((char *)"/gzinfo");
+			}
+			// --- ?zgo <#N> : zone'a isinlan, 40 sn bekle, sonra geri don (gruba bildirir) ---
+			else if(!strncmp(pGroupMsg, "?zgo", 4) && (pGroupMsg[4] == ' ' || pGroupMsg[4] == '#' || (pGroupMsg[4] >= '0' && pGroupMsg[4] <= '9')))
+			{
+				const char *pArg = pGroupMsg + 4;
+				while(*pArg == ' ' || *pArg == '#') pArg++;
+				int iZone = atoi(pArg);
+				if(iZone >= 0 && iZone < g_zoneCount)
+				{
+					// Eski (spawn) pozisyonu kaydet
+					float fPos[3] = {0, 0, 0};
+					if(!getPlayerPos(g_myPlayerID, fPos))
+					{
+						Log("[ZGO] Mevcut pozisyon alinamadi, geri donus noktasi kullanilamayacak.");
+					}
+					g_zgoReturnPos[0] = fPos[0];
+					g_zgoReturnPos[1] = fPos[1];
+					g_zgoReturnPos[2] = fPos[2];
+
+					float fCenterX = (g_zoneMinX[iZone] + g_zoneMaxX[iZone]) / 2.0f;
+					float fCenterY = (g_zoneMinY[iZone] + g_zoneMaxY[iZone]) / 2.0f;
+					char szCmd[128];
+					sprintf_s(szCmd, sizeof(szCmd), "/pos %.2f %.2f %.2f", fCenterX, fCenterY, ZGO_TELEPORT_Z);
+					Log("[ZGO] ?zgo %d -> zone merkezine isinlaniliyor (%s), 40 sn beklenip donulecek.", iZone, szCmd);
+
+					g_zgoActive = true;
+					g_zgoZoneId = iZone;
+					g_zgoReturnTick = GetTickCount() + ZGO_STAY_MS;
+					sendServerCommand(szCmd);
+
+					char szMsg[128];
+					sprintf_s(szMsg, sizeof(szMsg), "!Zone #%d de. /go yazarak yanima isinlanabilirsin, 40 sn sonra donuyorum.", iZone);
+					g_bridgeSuppressEcho++;
+					sendChat(szMsg);
+				}
+				else
+				{
+					Log("[ZONE] ?zgo %d gecersiz (toplam zone: %d).", iZone, g_zoneCount);
+					g_bridgeSuppressEcho++;
+					char szMsg[128];
+					sprintf_s(szMsg, sizeof(szMsg), "!Zone %d bulunamadi (toplam: %d).", iZone, g_zoneCount);
+					sendChat(szMsg);
+				}
+			}
+			// --- ?zgo (argumansiz) : zone listesi bilgisi ---
+			else if(!strncmp(pGroupMsg, "?zgo", 4) && (pGroupMsg[4] == '\0'))
+			{
+				Log("[ZONE] ?zgo (argumansiz), /gzinfo gonderiliyor.");
+				sendServerCommand((char *)"/gzinfo");
+			}
+			// --- ?za / ?zattack <#N> : zone saldirisi baslat → sunucuya /gz gonder (180 sn cooldown) ---
+			else if((!strncmp(pGroupMsg, "?za", 3) && (pGroupMsg[3] == '\0' || pGroupMsg[3] == ' '))
+			     || (!strncmp(pGroupMsg, "?zattack", 8) && (pGroupMsg[8] == '\0' || pGroupMsg[8] == ' ')))
+			{
+				DWORD dwNow = GetTickCount();
+				if(g_lastZoneWarTime != 0 && (dwNow - g_lastZoneWarTime) < 180000)
+				{
+					int iLeft = (int)((180000 - (dwNow - g_lastZoneWarTime)) / 1000);
+					char szCd[128];
+					sprintf_s(szCd, sizeof(szCd), "!Cooldown: %d sn kaldi (?za)", iLeft);
+					Log("[ZONEWAR] Cooldown aktif (%d sn kaldi), ?za yoksayildi.", iLeft);
+					g_bridgeSuppressEcho++;
+					sendChat(szCd);
+					return;
+				}
+				g_lastZoneWarTime = dwNow;
+				Log("[ZONE] %s yakalandi. /gz sunucu komutu gonderiliyor...", pGroupMsg);
+				sendServerCommand((char *)"/gz");
+			}
+			// --- ?zf <#N> : zone durumu sorgula → /gzinfo + flashing zone dagilimi ---
+			else if(!strncmp(pGroupMsg, "?zf", 3) && (pGroupMsg[3] == '\0' || pGroupMsg[3] == ' '))
+			{
+				Log("[ZONE] ?zf yakalandi, /gzinfo gonderiliyor.");
+				sendServerCommand((char *)"/gzinfo");
+				BuildFlashZoneSummary();
+			}
+			// --- ?1414 : backup cagrisi → Discord backup kanalina @here, 60 sn cooldown ---
+			else if(!strncmp(pGroupMsg, "?1414", 5) && (pGroupMsg[5] == '\0' || pGroupMsg[5] == ' '))			{
 				DWORD dwNow = GetTickCount();
 				if(g_lastBackupTime != 0 && (dwNow - g_lastBackupTime) < 60000)
 				{
-					Log("[BACKUP] Cooldown aktif, ?1414 yoksayildi.");
+					int iLeft = (int)((60000 - (dwNow - g_lastBackupTime)) / 1000);
+					char szCd[128];
+					sprintf_s(szCd, sizeof(szCd), "!Cooldown: %d sn kaldi (?1414)", iLeft);
+					Log("[BACKUP] Cooldown aktif (%d sn kaldi), ?1414 yoksayildi.", iLeft);
+					g_bridgeSuppressEcho++;
+					sendChat(szCd);
 					return;
 				}
 				g_lastBackupTime = dwNow;
-				Log("[BACKUP] Grup chat'inde ?1414 yakalandi. Discord'a backup cagrisi gonderiliyor...");
-				SendBackupCall();
+				Log("[BACKUP] Grup chat'inde ?1414 yakalandi. %s Discord'a backup cagrisi gonderiliyor...", pCmdSenderName);
+				SendBackupCall(pCmdSenderName);
 			}
 			// --- ?gz : zone war baslatma → Discord zonewar kanalina bildirim, 180 sn cooldown (RakGravy ile ayni) ---
 			else if(!strncmp(pGroupMsg, "?gz", 3) && (pGroupMsg[3] == '\0' || pGroupMsg[3] == ' '))
@@ -802,14 +1400,31 @@ void ClientMessage(RPCParameters *rpcParams)
 				DWORD dwNow = GetTickCount();
 				if(g_lastZoneWarTime != 0 && (dwNow - g_lastZoneWarTime) < 180000)
 				{
-					Log("[ZONEWAR] Cooldown aktif, ?gz yoksayildi.");
+					int iLeft = (int)((180000 - (dwNow - g_lastZoneWarTime)) / 1000);
+					char szCd[128];
+					sprintf_s(szCd, sizeof(szCd), "!Cooldown: %d sn kaldi (?gz)", iLeft);
+					Log("[ZONEWAR] Cooldown aktif (%d sn kaldi), ?gz yoksayildi.", iLeft);
+					g_bridgeSuppressEcho++;
+					sendChat(szCd);
 					return;
 				}
 				g_lastZoneWarTime = dwNow;
 				Log("[ZONEWAR] Grup chat'inde ?gz yakalandi. Zone war bildirimi gonderiliyor...");
 				SendZoneWarEvent("keeps", "");
 			}
-			// --- Grup chat kopusu: ! ile baslayan kendi mesajlarimizi Discord'a ilet ---
+			// --- ?gz2 : devam eden zone war'a manuel katilim → /gz2 ---
+			else if(!strncmp(pGroupMsg, "?gz2", 4) && (pGroupMsg[4] == '\0' || pGroupMsg[4] == ' '))
+			{
+				Log("[ZONEWAR] ?gz2 yakalandi, /gz2 gonderiliyor.");
+				sendServerCommand((char *)"/gz2");
+			}
+			// --- Grup chat kopusu: ! ile baslayan mesajlar Discord'a iletilir.
+			// ornek: oyunda "!test" yazilir -> bot sunucudan "!test" (GROUP) alir,
+			// basta ! (Discord'a gonderim isareti), sonrasi ("test") Discord'a yollanir.
+			// (Geri echo: sendChat ile gonderilen kendi mesajlarimizda da ! on-eki var;
+			//  g_bridgeSuppressEcho ile Discord'a tekrar gitmeleri engellenir.)
+			// Discord'dan oyuna iletilen mesajlar "![Discord] ..." on-ekiyle gelir;
+			// bunlar tekrar Discord'a gonderilmez (sonsuz dongu engeli).
 			else if(pGroupMsg[0] == '!')
 			{
 				if(g_bridgeSuppressEcho > 0)
@@ -817,11 +1432,14 @@ void ClientMessage(RPCParameters *rpcParams)
 					g_bridgeSuppressEcho--;
 					return;
 				}
-				Log("[GROUPCHAT] Grup mesaji Discord'a iletilmek uzere: %s", pGroupMsg);
-				SendGroupChatToDiscord(pGroupMsg);
+				if(strncmp(pGroupMsg, "![Discord]", 10) == 0)
+				{
+					Log("[GROUPCHAT] Discord geri iletimi atlandi (%s).", pGroupMsg);
+					return;
+				}
+				Log("[GROUPCHAT] Grup mesaji Discord'a iletilmek uzere: %s", pGroupMsg + 1);
+				SendGroupChatToDiscord(pGroupMsg + 1);
 			}
-		}
-	}
 }
 
 void Chat(RPCParameters *rpcParams)
@@ -847,7 +1465,7 @@ void Chat(RPCParameters *rpcParams)
 	if(playerId < 0 || playerId >= MAX_PLAYERS)
 		return;
 
-	if(imitateID == playerId)
+	if(imitateID == playerId || playerId == g_myPlayerID)
 		sendChat((char *)szText);
 
 	Log("[CHAT] %s: %s", playerInfo[playerId].szPlayerName, szText);
@@ -979,6 +1597,26 @@ void RequestClass(RPCParameters *rpcParams)
 		bsData.Read((PCHAR)&SpawnInfo,sizeof(PLAYER_SPAWN_INFO));
 
 		iLocalPlayerSkin = SpawnInfo.iSkin;
+	}
+}
+
+// RPC_Spawn (sunucu->istemci): sunucu oyuncuyu gercekten spawn ettigi an. Bu onay gelince
+// /fr (freeroam) komutunu tam zamaninda gonderir. UIF'de oyuncu komutlari RPC_ServerCommand
+// uzerinden islenir (RPC_Chat chat mesaji olarak echo edilir), bu yuzden sendServerCommand kullan.
+// Not: /fr'yi erken (login/auth oncesi) gonderip g_frSentOnce'i yutma; buradaki tek gonderim,
+// spawn menusu "Freeroam" secildikten sonraki GERCEK spawn onayina denk gelir.
+void SpawnConfirmed(RPCParameters *rpcParams)
+{
+	if(!iGameInited) return;
+
+	iSpawned = 1;
+	bIsSpectating = 0;
+
+	if(!g_frSentOnce)
+	{
+		g_frSentOnce = true;
+		Log("[SPAWN] Sunucu spawn onayi (RPC_Spawn) alindi, /fr (freeroam) gonderiliyor.");
+		sendServerCommand((char *)"/fr");
 	}
 }
 
@@ -1272,9 +1910,79 @@ void ScrDialogBox(RPCParameters *rpcParams)
 	char szDlgInfo[2048] = {0};
 	stringCompressor->DecodeString(szDlgInfo, sizeof(szDlgInfo), &bsData);
 
+	// --- SPAWN MENUSU: "Where would you like to go?" otomatik Freeroam secimi ---
+	// Spawn menusu (id=30, style 5 TABLIST_HEADERS) acildiginda "Freeroam" satirini
+	// secip dialogu gondeririz. Bu sayede bot virtual map'e dusmez, gercek freeroam
+	// bolgesine spawn olur. Bulunamazsa menu acik birakilir (asla kapatilmaz).
+	bool bIsSpawnMenu = (strstr(sampDialog.szTitle, "Where would you like to go") != NULL);
+	if(bIsSpawnMenu && (sampDialog.bDialogStyle == DIALOG_STYLE_LIST ||
+		sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST || sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST_HEADERS))
+	{
+		int iRow = 0, iItem = 0;
+		int iHeaderRows = (sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST_HEADERS) ? 1 : 0;
+		char *pLine = szDlgInfo;
+		char *pNext = strchr(pLine, '\n');
+		bool bSelected = false;
+		while(pLine && *pLine)
+		{
+			int iLen = pNext ? (int)(pNext - pLine) : (int)strlen(pLine);
+			if(iLen > 0)
+			{
+				char szRow[256];
+				int iCopy = iLen < 255 ? iLen : 255;
+				memcpy(szRow, pLine, iCopy);
+				szRow[iCopy] = 0;
+				while(iCopy > 0 && szRow[iCopy-1] == '\r') szRow[--iCopy] = 0;
+				Log("[SPAWNMENU] row %d: %s", iRow + 1, szRow);
+				if(iRow >= iHeaderRows && strstr(szRow, "Freeroam"))
+				{
+					iItem = iRow - iHeaderRows;
+					Log("[SPAWNMENU] 'Freeroam' secildi (ListItem %d).", iItem);
+					sendDialogResponse(sampDialog.wDialogID, 1, iItem, (char *)"Freeroam");
+					sampDialog.iIsActive = 0;
+					g_dwSpawnMenuHandled = GetTickCount();
+					bSelected = true;
+					break;
+				}
+			}
+			iRow++;
+			if(!pNext) break;
+			pLine = pNext + 1;
+			pNext = strchr(pLine, '\n');
+		}
+		if(bSelected)
+			return;
+		Log("[SPAWNMENU] Freeroam satiri bulunamadi, menu acik birakildi.");
+	}
+
 	// /pnetstats ve /gstats dialog yakalamasi: yakalandiysa ekrana cizdirme
 	if(HandleCapturedDialog(sampDialog.wDialogID, sampDialog.szTitle, szDlgInfo))
 	{
+		sampDialog.iIsActive = 0;
+		return;
+	}
+
+	// --- GLOBAL AUTOCLOSE ---
+	// Acik kalmasi zorunlu diyaloglar disindakileri otomatik kapat (ekranda birikmesin).
+	// Acik kalanlar: Login/Giris/Authentication, spawn menusu (freeroam secilmediyse),
+	// /astats icin account ID girisi (kullanici yazacak).
+	bool bKeepOpen = false;
+	if(strstr(sampDialog.szTitle, "Giris") || strstr(sampDialog.szTitle, "Login") ||
+		strstr(sampDialog.szTitle, "Authentication"))
+		bKeepOpen = true;
+	else if(bIsSpawnMenu)
+		bKeepOpen = true;
+	else if(sampDialog.bDialogStyle == DIALOG_STYLE_INPUT && g_waitingForGStats && !g_gstatsAutoSubmit)
+		bKeepOpen = true;
+
+	if(!bKeepOpen)
+	{
+		if(strstr(sampDialog.szTitle, "Zone Info"))
+		{
+			Log("[GZINFO-DATA] '%s': %.330s", sampDialog.szTitle, szDlgInfo);
+		}
+		Log("[AUTOCLOSE] Dialog id=%d '%s' (style %d) kapatildi.", sampDialog.wDialogID, sampDialog.szTitle, sampDialog.bDialogStyle);
+		sendDialogResponse(sampDialog.wDialogID, 0, 0xFFFF, (char *)"");
 		sampDialog.iIsActive = 0;
 		return;
 	}
@@ -1399,6 +2107,86 @@ void ScrSetPlayerFacingAngle(RPCParameters *rpcParams)
 	if(settings.iNormalModePosForce == 0)
 	{
 		bsData.Read(settings.fNormalModeRot);
+	}
+}
+
+// RPC 108 (RPC_ScrAddGangZone): sunucu gang zone oluştururken minX,minY,maxX,maxY
+// float'ları gönderir; zone ID client tarafında sıralı atanır. UIF zone numaraları
+// (#0'dan itibaren, haritanın üst solundan) bu sırayla eşleşir -> ?zgo için kaydet.
+void ScrAddGangZone(RPCParameters *rpcParams)
+{
+	PCHAR Data = reinterpret_cast<PCHAR>(rpcParams->input);
+	int iBitLength = rpcParams->numberOfBitsOfData;
+	if(iBitLength <= 0) return;
+
+	RakNet::BitStream bsData((unsigned char *)Data,(iBitLength/8)+1,false);
+
+	// Format (cozumlendi): WORD zoneId + 4 float (minX, minY, maxX, maxY) + 4 byte renk.
+	unsigned short usZoneId;
+	float fMinX, fMinY, fMaxX, fMaxY;
+	unsigned int uiColor = 0;
+	if(!bsData.Read(usZoneId) || !bsData.Read(fMinX) || !bsData.Read(fMinY) || !bsData.Read(fMaxX) || !bsData.Read(fMaxY))
+		return;
+	bsData.Read(uiColor); // renk (grup rengi, ?zf icin)
+
+	if(usZoneId < MAX_GANG_ZONES)
+	{
+		g_zoneMinX[usZoneId] = fMinX;
+		g_zoneMinY[usZoneId] = fMinY;
+		g_zoneMaxX[usZoneId] = fMaxX;
+		g_zoneMaxY[usZoneId] = fMaxY;
+		g_zoneColor[usZoneId] = uiColor;
+		if((int)usZoneId + 1 > g_zoneCount)
+			g_zoneCount = (int)usZoneId + 1;
+	}
+	Log("[GANGZONE] id=%d x=[%.1f..%.1f] y=[%.1f..%.1f] color=0x%08X", usZoneId, fMinX, fMaxX, fMinY, fMaxY, uiColor);
+}
+
+// RPC 120 (RPC_ScrRemoveGangZone): zone kaldırılır. Listeyi sıfırlamayız çünkü
+// zone numaraları (#N) sabittir; sadece gerekirse tekrar toplanır.
+void ScrRemoveGangZone(RPCParameters *rpcParams)
+{
+	PCHAR Data = reinterpret_cast<PCHAR>(rpcParams->input);
+	int iBitLength = rpcParams->numberOfBitsOfData;
+	if(iBitLength <= 0) return;
+
+	RakNet::BitStream bsData((unsigned char *)Data,(iBitLength/8)+1,false);
+	unsigned int uiZoneID = 0;
+	if(bsData.Read(uiZoneID))
+		Log("[GANGZONE] zone kaldirildi: %u", uiZoneID);
+}
+
+// RPC 121 (RPC_ScrFlashGangZone): UIF `/gzinfo` ile zone'lar flaslanir. Paket
+// zone ID + renk (grup rengi) tasir. ?zf icin hangi zone'larin flaslandigi
+// (kimin elinde oldugu) buradan cikarilir. (4 float koordinat da gelebilir.)
+void ScrFlashGangZone(RPCParameters *rpcParams)
+{
+	PCHAR Data = reinterpret_cast<PCHAR>(rpcParams->input);
+	int iBitLength = rpcParams->numberOfBitsOfData;
+	if(iBitLength <= 0) return;
+
+	RakNet::BitStream bsData((unsigned char *)Data,(iBitLength/8)+1,false);
+	unsigned short usZoneId = 0;
+	unsigned int uiColor = 0;
+	if(bsData.Read(usZoneId))
+		bsData.Read(uiColor);
+	g_zoneFlash[usZoneId] = true;
+	Log("[GANGZONE:FLASH] id=%u color=0x%08X bytes=%d", usZoneId, uiColor, iBitLength/8);
+}
+
+// RPC 85 (RPC_ScrStopFlashGangZone): flaslama durdurulur.
+void ScrStopFlashGangZone(RPCParameters *rpcParams)
+{
+	PCHAR Data = reinterpret_cast<PCHAR>(rpcParams->input);
+	int iBitLength = rpcParams->numberOfBitsOfData;
+	if(iBitLength <= 0) return;
+
+	RakNet::BitStream bsData((unsigned char *)Data,(iBitLength/8)+1,false);
+	unsigned short usZoneId = 0;
+	if(bsData.Read(usZoneId))
+	{
+		g_zoneFlash[usZoneId] = false;
+		Log("[GANGZONE:STOPFLASH] id=%u", usZoneId);
 	}
 }
 
@@ -1745,6 +2533,30 @@ void ProcessZoneWarAutoJoin()
 	}
 }
 
+// ?zgo: bekleme suresi doldu mu? -> eski (spawn) pozisyonuna don + gruba bildir.
+void ProcessZgoReturn()
+{
+	if(!g_zgoActive) return;
+
+	DWORD dwNow = GetTickCount();
+	if(dwNow < g_zgoReturnTick) return;
+
+	g_zgoActive = false;
+
+	char szCmd[128];
+	sprintf_s(szCmd, sizeof(szCmd), "/pos %.2f %.2f %.2f", g_zgoReturnPos[0], g_zgoReturnPos[1], g_zgoReturnPos[2]);
+	Log("[ZGO] Bekleme suresi doldu, eski pozisyona donuluyor (%s).", szCmd);
+	sendServerCommand(szCmd);
+
+	char szMsg[128];
+	if(g_zgoZoneId >= 0)
+		sprintf_s(szMsg, sizeof(szMsg), "!Zone #%d beklemesi bitti, geri donuldu.", g_zgoZoneId);
+	else
+		sprintf_s(szMsg, sizeof(szMsg), "!Zone beklemesi bitti, geri donuldu.");
+	g_bridgeSuppressEcho++;
+	sendChat(szMsg);
+}
+
 void RegisterRPCs(RakClientInterface *pRakClient)
 {
 	if (pRakClient == ::pRakClient)
@@ -1767,6 +2579,7 @@ void RegisterRPCs(RakClientInterface *pRakClient)
 		pRakClient->RegisterAsRemoteProcedureCall(&RPC_Pickup, Pickup);
 		pRakClient->RegisterAsRemoteProcedureCall(&RPC_DestroyPickup, DestroyPickup);
 		pRakClient->RegisterAsRemoteProcedureCall(&RPC_RequestClass, RequestClass);
+		pRakClient->RegisterAsRemoteProcedureCall(&RPC_Spawn, SpawnConfirmed);
 
 		// Scripting RPCs
 		pRakClient->RegisterAsRemoteProcedureCall(&RPC_ScrInitMenu, ScrInitMenu);
@@ -1789,6 +2602,10 @@ void RegisterRPCs(RakClientInterface *pRakClient)
 		pRakClient->RegisterAsRemoteProcedureCall(&RPC_ScrEditTextDraw, ScrEditTextDraw);
 		pRakClient->RegisterAsRemoteProcedureCall(&RPC_ScrTogglePlayerSpectating, ScrTogglePlayerSpectating);
 		pRakClient->RegisterAsRemoteProcedureCall(&RPC_ScrSetWarGroup, ScrSetWarGroup);
+		pRakClient->RegisterAsRemoteProcedureCall(&RPC_ScrAddGangZone, ScrAddGangZone);
+		pRakClient->RegisterAsRemoteProcedureCall(&RPC_ScrRemoveGangZone, ScrRemoveGangZone);
+		pRakClient->RegisterAsRemoteProcedureCall(&RPC_ScrFlashGangZone, ScrFlashGangZone);
+		pRakClient->RegisterAsRemoteProcedureCall(&RPC_ScrStopFlashGangZone, ScrStopFlashGangZone);
 	}
 }
 
@@ -1814,6 +2631,7 @@ void UnRegisterRPCs(RakClientInterface * pRakClient)
 		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_Pickup);
 		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_DestroyPickup);
 		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_RequestClass);
+		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_Spawn);
 
 		// Scripting RPCs
 		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_ScrInitMenu);
@@ -1836,5 +2654,9 @@ void UnRegisterRPCs(RakClientInterface * pRakClient)
 		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_ScrEditTextDraw);
 		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_ScrTogglePlayerSpectating);
 		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_ScrSetWarGroup);
+		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_ScrAddGangZone);
+		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_ScrRemoveGangZone);
+		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_ScrFlashGangZone);
+		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_ScrStopFlashGangZone);
 	}
 }

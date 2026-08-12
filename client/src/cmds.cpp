@@ -59,6 +59,7 @@ int RunCommand(char *szCMD, int iFromAutorun)
 		g_gstatsAutoSubmit = (szCMD[1] != 'a'); // /astats haric hepsi kendi grubu
 		g_gstatsInput = "";
 		g_gstatsRequesterId = "";
+		g_gstatsSentFirst = false;
 
 		// Parametreyi cek: "/gstats 5" -> "5"
 		const char *pArg = NULL;

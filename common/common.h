@@ -13,7 +13,7 @@
 #define NETCODE_CONNCOOKIELULZ 0x6969
 #define NETGAME_VERSION 4057
 
-#define AUTHOR "jlfm, bartekdvd, P3ti"
+#define AUTHOR "hakixld"
 
 #define REJECT_REASON_BAD_VERSION	1
 #define REJECT_REASON_BAD_NICKNAME	2
