@@ -134,6 +134,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 			// Zone war: son 10 sn'de otomatik /gz2 giris + GZ sonuc textdraw yakalama
 			ProcessZoneWarAutoJoin();
 
+			// Cache + grup renklerini backend'e (MySQL) yazar (60 sn'de bir)
+			ProcessDbSync();
+
+			// Cikis chat kuyrugu: bot mesajlari 5 sn arayla gonderilir
+			ProcessChatOutQueue();
+
 			// ?zgo: zone bekleme suresi dolduysa eski pozisyona don
 			ProcessZgoReturn();
 
@@ -142,6 +148,12 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 			// ?zf grup tag haritasi: bilinmeyen grup tag'lerini /gstats ile sorgula
 			ProcessGroupHarvest();
+
+			// ?zf renk->grup taramasi: zgo mantigiyla /gzinfo (baglanti sonrasi oto, bir kez)
+			ProcessZoneScan();
+
+			// ?zf: /gzinfo asenkron oldugu icin flash paketleri geldikten sonra (3 sn) dagilim
+			ProcessZfFlashSummary();
 
 			// Discord grup chat kopusu: bekleyen Discord mesajlarini cek (2 sn'de bir)
 			PollDiscordChat();
@@ -341,14 +353,24 @@ void Log(char *fmt, ...)
 	}
 	else
 	{
-		LPTSTR tbuf = new TCHAR[512];
-		wsprintf(tbuf, buffer);
+		// Self-heal: loghwnd lives in the window thread; if it was lost
+		// (stale/zeroed), re-resolve it from the main window before each add.
+		if(!IsWindow(loghwnd))
+			loghwnd = GetDlgItem(hwnd, IDC_LSTCUSTOM);
 
-		int lbCount = SendMessage(loghwnd, LB_GETCOUNT, 0, 0);
-		WPARAM idx = SendMessage(loghwnd, LB_ADDSTRING, 0, (LPARAM)tbuf);
+		if(IsWindow(loghwnd))
+		{
+			LPTSTR tbuf = new TCHAR[512];
+			memset(tbuf, 0, 512);
+			lstrcpyn(tbuf, buffer, 512); // plain copy, was wsprintf(tbuf, buffer) - format-string UB
 
-		SendMessage(loghwnd, LB_SETCURSEL, lbCount - 1, 0);
-		SendMessage(loghwnd, LB_SETTOPINDEX, idx, 0);
+			int lbCount = SendMessage(loghwnd, LB_GETCOUNT, 0, 0);
+			WPARAM idx = SendMessage(loghwnd, LB_ADDSTRING, 0, (LPARAM)tbuf);
+			SendMessage(loghwnd, LB_SETITEMDATA, idx, (LPARAM)tbuf);
+
+			SendMessage(loghwnd, LB_SETCURSEL, lbCount - 1, 0);
+			SendMessage(loghwnd, LB_SETTOPINDEX, idx, 0);
+		}
 	}
 
 	fprintf(flLog, "\n");

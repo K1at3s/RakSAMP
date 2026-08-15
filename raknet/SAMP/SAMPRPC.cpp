@@ -240,22 +240,73 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
     // 2. /pnetstats YAKALAMASI (?pl)
     // -------------------------------------------------------------
     if (g_waitingForPNetStats) {
-        g_waitingForPNetStats = false;
-
-        if (GetTickCount() - g_pnetstatsReqTime > 15000)
+        if (GetTickCount() - g_pnetstatsReqTime > 15000) {
+            g_waitingForPNetStats = false;
             return 0;
+        }
 
         double dLoss = ExtractPacketLoss(szInfo);
         double dFps = ExtractNumberNear(szInfo, "fps");
         double dPing = ExtractNumberNear(szInfo, "ping");
+        // Erteleme kontrolu merge ONCESI yapilir: cache merge boslugu doldurup
+        // (cache dLoss=0.0) ertelemeyi engellememeli. (Erteleme amaci: taze
+        // Stats-post'tan gercek FPS almak; cache bayat/deger yok olabilir.)
+        bool bDialogEmpty = (dLoss < 0.0);
         if (dPing < 0.0 && g_plTargetId >= 0 && g_plTargetId < MAX_PLAYERS)
             dPing = (double)playerInfo[g_plTargetId].dwPing; // scoreboard ping'i
 
+        // UIF /pnetstats FPS icermez (FPS: --) ve kullaniciya ait loss/ping dialogda
+        // olmayabilir. "Stats ->" grup mesajlarindan doldurulan cache'ten eksikleri
+        // tamamla (netrpc.cpp doldurur, player_cache.txt'ye kalici yazar).
+        if (g_plTargetId >= 0 && g_plTargetId < MAX_PLAYERS && g_playerCache[g_plTargetId].dwTime != 0) {
+            if (dLoss < 0.0 && g_playerCache[g_plTargetId].dLoss >= 0.0)
+                dLoss = g_playerCache[g_plTargetId].dLoss;
+            if (dFps < 0.0 && g_playerCache[g_plTargetId].iFps >= 0)
+                dFps = (double)g_playerCache[g_plTargetId].iFps;
+            if (dPing < 0.0 && g_playerCache[g_plTargetId].iPing >= 0)
+                dPing = (double)g_playerCache[g_plTargetId].iPing;
+        }
+
         Log("[PNETSTATS-DATA] [%s] %.1500s", szTitle ? szTitle : "?", szInfo);
 
+        // UIF /pnetstats "Network Active: 1" gibi BOS doner (loss/fps yok). Asil
+        // veri /pnetstats'in tetikledigi "Player [X] Stats ->" grup mesajindadir.
+        // Dialogda loss yoksa cevabi O yakalayiciya birak: flag ACIK kalir, dialogu
+        // kapat; Stats-post gelince netrpc.cpp taze veriyle cevaplar (cache yoluyla
+        // aninda eski FPS gostermek yerine). Zaman asimini ProcessZoneWarAutoJoin
+        // toparlar (cache fallback'li).
+        if (bDialogEmpty) {
+            Log("[PNETSTATS] Dialog veri icermiyor, 'Stats ->' bekleniyor (hedef %d).", g_plTargetId);
+            RakNet::BitStream bsResponse;
+            bsResponse.Write((uint16_t)wDialogID);
+            bsResponse.Write((uint8_t)0);        // Button 0 (İptal/Kapat)
+            bsResponse.Write((uint16_t)0xFFFF);   // Item ID
+            bsResponse.Write((uint8_t)0);        // Input Text Length
+            pRakClient->RPC(&RPC_DialogResponse, &bsResponse, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
+            std::cout << "[AUTOCLOSE] pnetstats (bos) diyalogu kapatildi, Stats-> bekleniyor\n";
+            return 1; // g_waitingForPNetStats ACIK kalir
+        }
+
+        g_waitingForPNetStats = false;
+
         char szResult[192];
-        const char *pPlName = (g_plTargetId >= 0 && g_plTargetId < MAX_PLAYERS && playerInfo[g_plTargetId].szPlayerName[0])
-            ? playerInfo[g_plTargetId].szPlayerName : g_szNickName;
+        // Hedef adi: canli grup basligindan ogrenilen ad -> cache'teki ad -> "Player <id>".
+        // Botun kendi adi (g_szNickName) SADECE hedef botun kendisiyse kullanilir; ?pl <id>
+        // cevabi "hakixld's PL" gibi yanlis isimle donemez.
+        char szFallbackName[32];
+        const char *pPlName = "Player ?";
+        if (g_plTargetId >= 0 && g_plTargetId < MAX_PLAYERS) {
+            if (playerInfo[g_plTargetId].szPlayerName[0]) {
+                pPlName = playerInfo[g_plTargetId].szPlayerName;
+            } else if (g_playerCache[g_plTargetId].szName[0]) {
+                pPlName = g_playerCache[g_plTargetId].szName;
+            } else if (g_plTargetId == (int)g_myPlayerID) {
+                pPlName = g_szNickName;
+            } else {
+                sprintf_s(szFallbackName, sizeof(szFallbackName), "Player %d", g_plTargetId);
+                pPlName = szFallbackName;
+            }
+        }
         if (dLoss >= 0.0) {
             unsigned int uiFps = (dFps >= 0.0 && dFps <= 1000.0) ? (unsigned int)dFps : 0;
             int iPing = (dPing >= 0.0 && dPing <= 30000.0) ? (int)dPing : -1;

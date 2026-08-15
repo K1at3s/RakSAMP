@@ -29,3 +29,14 @@ UpgradeLog.htm
 pkt.obj
 Thumbs.db
 Backup/
+
+# Runtime data / caches (client writes these at runtime)
+client/bin/player_cache.txt
+client/bin/group_colors.txt
+client/bin/bot_lang.txt
+client/bin/RakSAMPClient.log
+client/bin/TextDraws.log
+client/bin/stdout.txt
+client/bin/stderr.txt
+log.txt
+out.txt

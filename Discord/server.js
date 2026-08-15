@@ -2,14 +2,20 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const crypto = require('crypto');
-const mongoose = require('mongoose');
 const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 
 const config = require('./config');
 const License = require('./models/License');
+const Guild = require('./models/Guild');
 const guildUtils = require('./utils/guildUtils');
 const socketStore = require('./utils/socketStore');
 const { loadCommands, registerCommands, registerForGuild, handleInteraction } = require('./handlers/commandHandler');
+const db = require('./db');
+
+// --- HWID ONAY YAPILANDIRMASI (yalnızca sahibin sunucusu) ---
+const OWNER_ID = '1065352859195015260';          // sadece bu kullanıcı onaylayıp reddedebilir
+const OWNER_GUILD_ID = '1079118636729520139';    // butonlar bu sunucuda anlamlı
+const OWNER_LOG_CHANNEL_ID = '1537910799287459880'; // bildirimler bu kanala otomatik düşer
 
 // --- EXPRESS & SOCKET.IO SETUP ---
 const app = express();
@@ -17,8 +23,8 @@ app.use(express.json());
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-// --- MONGOOSE ---
-mongoose.connect(config.MONGO_URI, config.MONGO_OPTIONS).then(() => console.log('🍃 MongoDB Bağlantısı Başarılı')).catch(err => console.error(err));
+// --- MYSQL (db.js shim) ---
+require('./db').init().then(() => console.log(`✔ Veri katmanı hazır (DB=${config.DB})`)).catch(err => console.error(err));
 
 // --- DISCORD BOT SETUP ---
 const client = new Client({
@@ -28,28 +34,47 @@ const client = new Client({
 client.once('clientReady', async () => {
     loadCommands();
     await registerCommands(client);
+    client.user.setPresence({
+        status: 'online',
+        activities: [{ name: 'RakSAMP', type: 0 }] // type 0 = "Playing" (oynuyor)
+    });
     console.log(`🤖 Discord Bot Aktif: ${client.user.tag}`);
+    // Botun ekli olduğu sunucularda eksik log kanallarını otomatik oluştur
+    for (const g of client.guilds.cache.values()) {
+        await ensureGuildChannels(g.id);
+    }
 });
 
-// Yeni sunucuya eklendiğinde komutları o sunucuya kaydet
+// Yeni sunucuya eklendiğinde komutları o sunucuya kaydet + log kanallarını oluştur
 client.on('guildCreate', async (guild) => {
     const data = loadCommands().map(c => c.data.toJSON());
     await registerForGuild(guild, data);
+    await ensureGuildChannels(guild.id);
 });
 
 client.on('interactionCreate', async (interaction) => {
-    // Lisans Onaylama Butonları
-    if (interaction.isButton()) {
-        if (interaction.customId.startsWith('approve_')) {
-            const hwid = interaction.customId.replace('approve_', '');
-            await License.findOneAndUpdate({ hwid }, { isApproved: true }, { upsert: true });
+    // Lisans Onaylama Butonları (yalnızca sahip; başkası basarsa uyar)
+    if (interaction.isButton() && (interaction.customId.startsWith('approve_') || interaction.customId.startsWith('reject_'))) {
+        if (interaction.user.id !== OWNER_ID || interaction.guildId !== OWNER_GUILD_ID) {
+            return interaction.reply({ content: 'Bu butonları yalnızca sunucu sahibi kullanabilir.', ephemeral: true });
+        }
+        const hwid = interaction.customId.replace(/^(approve|reject)_/, '');
 
+        if (interaction.customId.startsWith('approve_')) {
+            await License.findOneAndUpdate({ hwid }, { isApproved: true }, { upsert: true });
             const embed = new EmbedBuilder()
                 .setTitle("✅ HWID Lisansı Onaylandı")
                 .setDescription(`**HWID:** \`${hwid}\` cihazına erişim izni verildi.`)
                 .setColor(0x00FF00)
                 .setTimestamp();
-
+            await interaction.update({ embeds: [embed], components: [] });
+        } else {
+            await License.findOneAndUpdate({ hwid }, { isApproved: false }, {});
+            const embed = new EmbedBuilder()
+                .setTitle("❌ HWID Lisansı Reddedildi")
+                .setDescription(`**HWID:** \`${hwid}\` cihazına erişim izni verilmedi.`)
+                .setColor(0xFF0000)
+                .setTimestamp();
             await interaction.update({ embeds: [embed], components: [] });
         }
         return;
@@ -61,6 +86,45 @@ client.on('interactionCreate', async (interaction) => {
 client.login(config.DISCORD_BOT_TOKEN).catch(console.error);
 
 // --- YARDIMCI FONKSİYONLAR ---
+
+// Discord'a giden her kanal tipi için otomatik kanal oluşturur (yoksa) ve guild
+// kaydına (guildId ile) yazar. Neler discord'a gidiyorsa hepsi burada: lisans log,
+// war, gstats, grup chat, zone war, backup, welcome. Kanal adları bot-<tip>.
+const AUTO_CHANNELS = [
+    { field: 'logChannelId', name: 'bot-log', topic: 'Lisans bildirimleri' },
+    { field: 'warChannelId', name: 'bot-war', topic: 'War mesajları' },
+    { field: 'gstatsChannelId', name: 'bot-gstats', topic: 'Grup istatistikleri' },
+    { field: 'groupChatChannelId', name: 'bot-groupchat', topic: 'Grup chat köprüsü' },
+    { field: 'zoneWarChannelId', name: 'bot-zonewar', topic: 'ZONE WAR bildirimleri' },
+    { field: 'backupChannelId', name: 'bot-backup', topic: 'Backup çağrıları' },
+    { field: 'welcomeChannelId', name: 'bot-welcome', topic: 'Welcome back mesajları' }
+];
+
+async function ensureGuildChannels(guildId) {
+    try {
+        const guild = await client.guilds.fetch(guildId);
+        if (!guild) return;
+        const rec = await guildUtils.getGuild(guildId);
+        const updates = {};
+        for (const ac of AUTO_CHANNELS) {
+            if (rec[ac.field]) continue; // zaten ayarlı
+            const existing = guild.channels.cache.find(ch => ch.name === ac.name && ch.type === 0);
+            let chId = existing ? existing.id : null;
+            if (!chId) {
+                const created = await guild.channels.create({ name: ac.name, topic: ac.topic, type: 0 });
+                chId = created.id;
+            }
+            updates[ac.field] = chId;
+        }
+        if (Object.keys(updates).length) {
+            await Guild.findOneAndUpdate({ guildId }, { $set: updates }, { upsert: true, setDefaultsOnInsert: true });
+            console.log(`📁 OTO-KANAL guild=${guildId}: ${Object.keys(updates).join(', ')} oluşturuldu/atandı`);
+        }
+    } catch (e) {
+        console.error('Otomatik kanal oluşturma hatası:', e.message);
+    }
+}
+
 // hwid -> oyun içine iletilecek bekleyen Discord mesajları (geçici, bellekte)
 const groupChatOutbox = new Map();
 
@@ -91,26 +155,27 @@ async function resolveGuildForRakSAMP(body) {
     return null;
 }
 
-// HWID'e bağlı sunucunun log kanalına lisans onay bildirimi gönder
-// Kanal ayarlanmamışsa null döner ve bildirim atlanır
+// HWID lisans bildirimi — sahibin sabit log kanalına butonlu embed atar (otomatik).
+// Sunucu/kanal YAPILANDIRMADAN sabit: tek sahibin tek kanalı (users'ın kendi sunucusu).
 async function notifyUnapprovedDevice(hwid) {
-    const guild = await guildUtils.getGuildByHwid(hwid);
-    const channelId = guild ? guild.logChannelId : null;
-
-    if (!channelId) {
-        console.log(`⚠️ Lisanssız cihaz tespit edildi (HWID: ${hwid}) — log kanalı ayarlanmamış (null), bildirim atlanıyor.`);
-        return;
-    }
+    const channelId = OWNER_LOG_CHANNEL_ID;
 
     try {
         const channel = await client.channels.fetch(channelId);
-        if (!channel) return;
+        if (!channel) {
+            console.log(`⚠️ Lisanssız cihaz (HWID: ${hwid}) — log kanalı (${channelId}) bulunamadı, bildirim atlanıyor.`);
+            return;
+        }
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId(`approve_${hwid}`)
                 .setLabel('✅ Lisans Onayla')
-                .setStyle(ButtonStyle.Success)
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId(`reject_${hwid}`)
+                .setLabel('❌ Reddet')
+                .setStyle(ButtonStyle.Danger)
         );
 
         const embed = new EmbedBuilder()
@@ -659,6 +724,19 @@ app.post('/api/groupchat', async (req, res) => {
     return res.json({ success: true, enabled: true, channelConfigured: true });
 });
 
+// Oyun içi ?tr/?en — bot mesaj dilini MongoDB'de sakla (default "en")
+app.post('/api/lang/set', async (req, res) => {
+    const body = req.body || {};
+    const guild = await resolveGuildForRakSAMP(body);
+    if (!guild) {
+        return res.json({ success: false, lang: 'en' });
+    }
+    guild.lang = (String(body.lang || 'en') === 'tr') ? 'tr' : 'en';
+    await guild.save();
+    console.log(`🌐 LANG (guild=${guild.guildId}): ${guild.lang}`);
+    return res.json({ success: true, lang: guild.lang });
+});
+
 // RakSAMP istemcisi bekleyen Discord mesajlarını ve köprü durumunu çeker (polling)
 app.get('/api/groupchat/poll', async (req, res) => {
     const hwid = String(req.query.hwid || '');
@@ -667,7 +745,91 @@ app.get('/api/groupchat/poll', async (req, res) => {
     const channelConfigured = guild ? !!guild.groupChatChannelId : false;
     const messages = (groupChatOutbox.get(hwid) || []).slice();
     groupChatOutbox.delete(hwid);
-    return res.json({ enabled, channelConfigured, messages });
+    const out = { enabled, channelConfigured, messages };
+
+    // Bot'un oyun içi grubunu guild kaydına yaz (poll'dan öğrenilir): log kanalı
+    // eşleşmesi/dil bu grup adı üzerinden yürür, guild yoksa hiçbir şey değişmez.
+    if (guild && req.query.group) {
+        const grp = String(req.query.group).slice(0, 255);
+        if (guild.groupName !== grp) {
+            guild.groupName = grp;
+            await guild.save();
+            console.log(`🏷️ GROUP(guild=${guild.guildId}): ${grp}`);
+        }
+    }
+    // Guild yoksa lang alanı GÖNDERİLMEZ: istemci lokal ?tr/?en seçimini korur
+    // (guild.lang varsayılanı 'en' yoksa ezerdi).
+    if (guild) out.lang = guild.lang;
+    return res.json(out);
+});
+
+// Oyun içi ?guildid: bu HWID'i Discord sunucusuna bağlar (linkedHwids).
+// Boylece botu ekleyen HER grup kendi sunucusuyla kullanabilir;
+// mevcut tüm hwid tabanlı çağrılar (lang, groupchat, welcome...) otomatik çözülür.
+app.post('/api/guildid', async (req, res) => {
+    const body = req.body || {};
+    const hwid = String(body.hwid || '').trim();
+    const guildId = String(body.guildId || '').trim();
+    if (!hwid || !/^\d+$/.test(guildId)) {
+        return res.json({ success: false, message: "Gecersiz guild id." });
+    }
+    const guild = await guildUtils.getGuild(guildId);
+    if (!guild.linkedHwids.includes(hwid)) {
+        guild.linkedHwids.push(hwid);
+        await guild.save();
+    }
+    console.log(`🔗 GUILDID (hwid=${hwid} -> guild=${guildId})`);
+    return res.json({ success: true, guildId: guild.guildId });
+});
+
+// RakSAMP client'ı: oyuncu istatistik cache'ini DB'ye push eder (?pl verisi).
+// Body: { players: [{ id, name, packetloss, fps, ping }, ...] } — id üzerinden upsert.
+
+app.post('/api/player/cache', async (req, res) => {
+    const players = (req.body || {}).players;
+    if (!Array.isArray(players)) return res.status(400).json({ success: false, message: "players bekleniyor" });
+    const rows = players
+        .filter(p => Number.isInteger(p.id) && p.id >= 0 && p.id < 1000)
+        .map(p => [p.id, String(p.name || '').slice(0, 64), Number(p.packetloss) || 0, Number(p.fps) || 0, Number(p.ping) || 0, new Date()]);
+    if (!rows.length) return res.json({ success: true, count: 0 });
+    try {
+        // Cache dosyası tek doğru kaynak olduğundan tablo her push'ta sıfırlanıp
+        // yeniden yazılır (eski/çıkmış oyuncu verisi burada kalmaz).
+        await db.execute('DELETE FROM players');
+        await db.query(
+            `INSERT INTO players (id, name, packetloss, fps, ping, updated_at) VALUES ?`,
+            [rows]
+        );
+        console.log(`🎮 PLAYER-CACHE: ${rows.length} oyuncu DB'ye yazildi`);
+        return res.json({ success: true, count: rows.length });
+    } catch (err) {
+        console.error('PLAYER-CACHE hatasi:', err.message);
+        return res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// RakSAMP client'ı: grup renk haritasını DB'ye push eder.
+// Body: { colors: [{ color, tag }, ...] } — color üzerinden upsert.
+app.post('/api/group/colors', async (req, res) => {
+    const colors = (req.body || {}).colors;
+    if (!Array.isArray(colors)) return res.status(400).json({ success: false, message: "colors bekleniyor" });
+    const rows = colors
+        .filter(c => Number.isInteger(c.color) && c.color > 0)
+        .map(c => [c.color >>> 0, String(c.tag || '').slice(0, 96), new Date()]);
+    if (!rows.length) return res.json({ success: true, count: 0 });
+    try {
+        // Renk haritası da sil-üstüne-yaz: eski grup kayıtları veride kalmaz.
+        await db.execute('DELETE FROM group_colors');
+        await db.query(
+            `INSERT INTO group_colors (color, tag, updated_at) VALUES ?`,
+            [rows]
+        );
+        console.log(`🎨 GROUP-COLORS: ${rows.length} renk DB'ye yazildi`);
+        return res.json({ success: true, count: rows.length });
+    } catch (err) {
+        console.error('GROUP-COLORS hatasi:', err.message);
+        return res.status(500).json({ success: false, message: err.message });
+    }
 });
 
 server.listen(config.PORT, () => {

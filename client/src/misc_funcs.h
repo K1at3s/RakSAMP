@@ -19,6 +19,7 @@ void sampChatFlood();
 void sampClassFlood();
 void sendServerCommand(char *szCommand);
 void sendChat(char *szMessage);
+void ProcessChatOutQueue();
 void sendRconCommand(char *szRCONCmd, int iIsLogin);
 void sendScmEvent(int iEventType, DWORD dwParam1, DWORD dwParam2, DWORD dwParam3);
 void sendDialogResponse(WORD wDialogID, BYTE bButtonID, WORD wListBoxItem, char *szInputResp);

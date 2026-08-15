@@ -39,6 +39,8 @@ bool g_waitingForPNetStats = false;
 unsigned long g_pnetstatsReqTime = 0;
 bool g_inZoneWar = false;
 int g_plTargetId = -1;
+// ?pl istatistik cache'i (netrpc.cpp doldurur, SAMPRPC.cpp okur)
+stPlayerCache g_playerCache[PLAYER_CACHE_SIZE] = {0};
 bool g_waitingForGst = false;
 unsigned long g_gstReqTime = 0;
 bool g_waitingForAdmins = false;
@@ -48,6 +50,8 @@ std::string g_adminsRequesterId = "";
 bool g_groupChatEnabled = false;
 int g_bridgeSuppressEcho = 0;
 std::string g_welcomeMessage = "";
+// Bot mesaj dili: false=English (varsayilan), true=Turkce. Mongo'dan (Guild.lang) gelir.
+bool g_langTurkish = false;
 
 static DWORD s_lastGroupChatPoll = 0;
 
@@ -180,6 +184,53 @@ void ToggleDiscordChat() {
     }
 }
 
+// ?tr/?en: bot mesaj dilini backend'e (MongoDB Guild.lang) yazar
+void ServerSetBotLang(bool turkish) {
+    if (!g_isEngineActive || g_sessionToken.empty()) return;
+
+    httplib::Client cli(g_backendBase);
+    cli.set_connection_timeout(5);
+
+    json body = {
+        {"hwid", g_myHWID},
+        {"lang", turkish ? "tr" : "en"}
+    };
+
+    auto res = cli.Post("/api/lang/set", body.dump(), "application/json");
+    if (res && res->status == 200) {
+        std::cout << (turkish ? "🌐 [LANG] Turkce kaydedildi (MongoDB)\n" : "🌐 [LANG] English saved (MongoDB)\n");
+    } else {
+        std::cout << "⚠️ [LANG] Kaydedilemedi (HTTP " << (res ? res->status : -1) << ")\n";
+    }
+}
+
+// ?guildid: bu HWID'i Discord sunucusuna baglar. Sonraki tum hwid tabanli
+// cagrilar (dil, grup chat, welcome...) o sunucuya cozulur.
+bool ServerSetGuildId(const char *guildId) {
+    if (!g_isEngineActive || g_sessionToken.empty() || !guildId || !guildId[0]) return false;
+
+    httplib::Client cli(g_backendBase);
+    cli.set_connection_timeout(5);
+
+    json body = {
+        {"hwid", g_myHWID},
+        {"guildId", guildId}
+    };
+
+    auto res = cli.Post("/api/guildid", body.dump(), "application/json");
+    if (res && res->status == 200) {
+        try {
+            auto data = json::parse(res->body);
+            if (data.value("success", false)) {
+                std::cout << "🔗 [GUILDID] Baglandi: " << guildId << "\n";
+                return true;
+            }
+        } catch (...) {}
+    }
+    std::cout << "⚠️ [GUILDID] Baglanti basarisiz (HTTP " << (res ? res->status : -1) << ")\n";
+    return false;
+}
+
 // 6. Oyun -> Discord: grup chat'inde ! ile baslayan kendi mesajimizi ilet
 void SendGroupChatToDiscord(const char *text) {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
@@ -215,12 +266,30 @@ void PollDiscordChat() {
     cli.set_connection_timeout(3);
 
     std::string url = "/api/groupchat/poll?hwid=" + g_myHWID;
+    // Botun calistigi grubu backend'e bildir (guild kaydina groupName yazilir):
+    // "hakixld botu The Youngster'da" bilgisi buradan gelir (oyun ici otomatik ogrenilir).
+    if (!g_myGroupName.empty()) {
+        url += "&group=" + g_myGroupName;
+    }
     auto res = cli.Get(url.c_str());
     if (!res || res->status != 200) return;
 
     try {
         auto data = json::parse(res->body);
         g_groupChatEnabled = data.value("enabled", g_groupChatEnabled);
+
+        // Bot dilini backend'den senkronla. Backend yalnizca guild bulabildigi
+        // zaman lang gonderir; guild yoksa alan yoktur ve lokal secim (?tr/?en)
+        // korunur — backend'in "en" varsayilani ?tr'yi ezmesin.
+        if (data.contains("lang") && data["lang"].is_string()) {
+            std::string lang = data["lang"].get<std::string>();
+            bool bTr = (lang == "tr");
+            if (bTr != g_langTurkish) {
+                g_langTurkish = bTr;
+                SaveLang();
+                std::cout << (g_langTurkish ? "🌐 [LANG] Dil: Turkce (backend poll)\n" : "🌐 [LANG] Language: English (backend poll)\n");
+            }
+        }
 
         if (data.contains("messages") && data["messages"].is_array()) {
             for (auto &m : data["messages"]) {
