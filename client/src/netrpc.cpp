@@ -48,9 +48,10 @@ static DWORD g_zwLearnTick = 0;
 static DWORD g_lastGztTime = 0;
 static int g_knownGroupMembers[MAX_PLAYERS];
 
-// Zone war süresi sabittir (UIF: 10 dakika). Chat'e düşen "Type /gz2 to join"
-// bildirimi savaşın başlangıç anıdır; ?gzt kalan süreyi bundan hesaplar.
+// Zone war süresi: ilk savaştan ölçülür (join -> wins/loses arası). Varsayılan 10 dk,
+// ?gzt ölçülmüş süreyi kullanir (chat'e düşen "Type /gz2 to join" bildirimi savaşın başlangıç anıdır).
 #define ZONE_WAR_TOTAL_MS 600000
+static DWORD g_zwWarDurationMs = ZONE_WAR_TOTAL_MS; // son ölçülen savaş süresi
 #define KILL_LIST_CAPTURE_WINDOW_MS 15000 // sonuç textdraw'ları için toplama penceresi
 static DWORD g_zoneWarStartTick = 0;
 
@@ -195,10 +196,16 @@ static int FindGroupColorByColor(unsigned int uiColor)
 }
 
 // ?zgo <gruptag>: grubun rengini bulup o renkteki 1 boş (flash etmeyen) zone'u doner.
-// Grubun hic zonu yoksa ya da hepsi savastaysa -1.
+// Grubun hic zonu yoksa ya da hepsi savastaysa -1. "Free" -> sahipsiz (renk 0) ilk zon.
 static int FindZoneByGroupTag(const char *szTag)
 {
 	if(!szTag || !szTag[0]) return -1;
+	if(!_stricmp(szTag, "Free"))
+	{
+		for(int zid = 0; zid < g_zoneCount; zid++)
+			if(g_zoneColor[zid] == 0) return zid;
+		return -1;
+	}
 	int gi = FindGroupColorByTag(szTag);
 	if(gi < 0) return -1;
 	unsigned int uiC = g_groupColors[gi].uiColor;
@@ -1425,9 +1432,10 @@ void ClientMessage(RPCParameters *rpcParams)
 				while(*pZ >= '0' && *pZ <= '9' && nZ < 15) szZoneTag[nZ++] = *pZ++;
 				szZoneTag[nZ] = 0;
 			}
-			// Ayni savasin 60 sn'de bir tekrar eden duyurusu: yoksay. (Yoksa
-			// g_zoneWarStartTick her tekrarda sifirlanir, son-10-sn otomatik giris
-			// HIC tetiklenmez ve join embed'i savas basina 7 kez duser.)
+			// Ayni savasin tekrar eden duyurusu: yoksay. (Yoksa g_zoneWarStartTick her
+			// tekrarda sifirlanir ve ?gzt kalan sureyi yanlis hesaplar.) Savas zaten
+			// aktifse gelen her yeni join duyurusu tekrar sayilir; zone tag'i uyuşmuyorsa
+			// (bos tag dahil) da ayni savasin devami kabul edilir.
 			if(g_inZoneWar && g_zoneWarStartTick != 0
 				&& (!szZoneTag[0] || !strcmp(g_zwWarZone, szZoneTag)))
 			{
@@ -1541,7 +1549,10 @@ void ClientMessage(RPCParameters *rpcParams)
 		// Grup adi henuz ogrenilmediyse (bos) hicbir zone mesaji yakalanmaz;
 		// sadece /gz2 join bildirimi yakalanir (kendi grubumuzun uyelerine ozel).
 		// /gz2 bildirimi kendi grubumuzun uyelerine ozel gonderildigi icin filtre uygulanmaz.
-		if(pAction && !bJoinNotice)
+		// wins/loses da filtreden MUAFlardir: savas bitisi grup adindan bagimsiz
+		// islenmeli (kill-list yakalayici + sure olcumu + ?gzt reset).
+		if(pAction && !bJoinNotice
+			&& strcmp(pAction, "wins") != 0 && strcmp(pAction, "loses") != 0)
 		{
 			if(g_myGroupName.empty() || strstr(pZoneMsg, g_myGroupName.c_str()) == NULL)
 				pAction = NULL;
@@ -1554,9 +1565,16 @@ void ClientMessage(RPCParameters *rpcParams)
 			{
 				g_lastZoneWarTime = dwNow;
 
-				// Savas bitti (wins/loses): sure sayacini sifirla.
+				// Savas bitti (wins/loses): sure sayacini sifirla ve gercek suresi olc.
 				if(!strcmp(pAction, "wins") || !strcmp(pAction, "loses"))
 				{
+					if(g_zoneWarStartTick != 0)
+					{
+						g_zwWarDurationMs = dwNow - g_zoneWarStartTick;
+						if(g_zwWarDurationMs < 60000) g_zwWarDurationMs = 60000; // mantikli alt sinir
+						if(g_zwWarDurationMs > ZONE_WAR_TOTAL_MS) g_zwWarDurationMs = ZONE_WAR_TOTAL_MS;
+						Log("[GZT] Savas suresi olculdu: %d sn", (int)(g_zwWarDurationMs / 1000));
+					}
 					g_zoneWarStartTick = 0;
 					g_inZoneWar = false;
 g_zwWarZone[0] = 0; // sonraki savas yeni duyuru sayilir
@@ -1850,13 +1868,13 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				g_bridgeSuppressEcho++;
 				sendChat((char *)"!Discord: uifserver.net/discord");
 			}
-			// --- ?w : Discord war help, 30 sn cooldown (E1 ile ayni) ---
+			// --- ?w : Discord war help, 5 dk cooldown (spam onlemek icin; 30 sn iken Discord'a yagmur gibi iniyordu) ---
 			else if(!strncmp(pGroupMsg, "?w", 2) && (pGroupMsg[2] == '\0' || pGroupMsg[2] == ' '))
 			{
 				DWORD dwNow = GetTickCount();
-				if(g_lastWarHelpTime != 0 && (dwNow - g_lastWarHelpTime) < 30000)
+				if(g_lastWarHelpTime != 0 && (dwNow - g_lastWarHelpTime) < 300000)
 				{
-					int iLeft = (int)((30000 - (dwNow - g_lastWarHelpTime)) / 1000);
+					int iLeft = (int)((300000 - (dwNow - g_lastWarHelpTime)) / 1000);
 					char szCd[128];
 					sprintf_s(szCd, sizeof(szCd), LM("!Cooldown: %d sn kaldi (?w)", "!Cooldown: %d secs left (?w)"), iLeft);
 					Log("[WARHELP] Cooldown aktif (%d sn kaldi), ?w yoksayildi.", iLeft);
@@ -2056,10 +2074,17 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				// (gercek kalan sure; chat duyuru ani ile savas basi ayni degil).
 				// Yoksa baslangic tick'inden hesaplanan deger kullanilir.
 				int iRemainingSec = -1;
-				if(g_warTimerTick != 0 && dwNow - g_warTimerTick < ZONE_WAR_TOTAL_MS)
+				if(!g_inZoneWar)
+				{
+					Log("[GZT] Savas aktif degil, War time bilgisi gonderilemiyor.");
+					g_bridgeSuppressEcho++;
+					sendChat((char *)LM("!War time: yok", "!War time: none"));
+					return;
+				}
+				if(g_warTimerTick != 0 && dwNow - g_warTimerTick < g_zwWarDurationMs)
 					iRemainingSec = g_warRemainingSec - (int)((dwNow - g_warTimerTick) / 1000);
-				else if(g_zoneWarStartTick != 0 && dwNow - g_zoneWarStartTick < ZONE_WAR_TOTAL_MS)
-					iRemainingSec = (int)((ZONE_WAR_TOTAL_MS - (dwNow - g_zoneWarStartTick)) / 1000);
+				else if(g_zoneWarStartTick != 0 && dwNow - g_zoneWarStartTick < g_zwWarDurationMs)
+					iRemainingSec = (int)((g_zwWarDurationMs - (dwNow - g_zoneWarStartTick)) / 1000);
 
 				if(iRemainingSec >= 0)
 				{
@@ -2249,11 +2274,32 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				}
 				else
 				{
-					Log("[ZONE] ?zgo %s icin zone bulunamadi.", pArg);
-					g_bridgeSuppressEcho++;
-					char szMsg[160];
-					sprintf_s(szMsg, sizeof(szMsg), LM("!%s icin zone bulunamadi.", "!No zone found for %s."), pArg);
-					sendChat(szMsg);
+					// Tag bilinmiyorsa (renk ogrenilmemis): YS flash listesinden tanidik
+					// bir tag ise HEMEN /gstats taramasi baslat (90 sn kuyruk beklemez).
+					AddSeenTag(pArg);
+					int fi = -1;
+					for(int k = 0; k < g_seenTagCount; k++)
+						if(!_stricmp(g_seenTags[k], pArg)) { fi = k; break; }
+					if(fi >= 0)
+					{
+						g_harvestIdx = fi + 1; // siradaki harvest bu tag'dan baslayacak
+						g_lastHarvestTime = 0; // 90 sn koselini atla
+						Log("[ZONE] ?zgo %s icin renk bilinmiyor, harvest kuyruguna alindi (aninda).", pArg);
+						g_bridgeSuppressEcho++;
+						char szMsg[160];
+						sprintf_s(szMsg, sizeof(szMsg),
+							LM("!%s icin zon taranıyor, ~30 sn sonra ?zgo %s tekrar dene.",
+							   "!Scanning zones for %s, retry ?zgo %s in ~30 sec."), pArg, pArg);
+						sendChat(szMsg);
+					}
+					else
+					{
+						Log("[ZONE] ?zgo %s icin zone bulunamadi (tag YS listesinde yok).", pArg);
+						g_bridgeSuppressEcho++;
+						char szMsg[160];
+						sprintf_s(szMsg, sizeof(szMsg), LM("!%s icin zone bulunamadi.", "!No zone found for %s."), pArg);
+						sendChat(szMsg);
+					}
 				}
 			}
 			// --- ?zgo (argumansiz) : zone listesi bilgisi ---
