@@ -51,13 +51,10 @@ static int g_knownGroupMembers[MAX_PLAYERS];
 // Zone war süresi sabittir (UIF: 10 dakika). Chat'e düşen "Type /gz2 to join"
 // bildirimi savaşın başlangıç anıdır; ?gzt kalan süreyi bundan hesaplar.
 #define ZONE_WAR_TOTAL_MS 600000
-#define ZONE_WAR_AUTOJOIN_MS 10000     // GZ bitmeden son 10 sn'de otomatik /gz2 (timer yoksa tahmin)
-#define ZONE_WAR_AUTOJOIN_WAIT_SEC 2   // timer textdraw'inden kalan sure siniri: son 00:02'de gir
 #define KILL_LIST_CAPTURE_WINDOW_MS 15000 // sonuç textdraw'ları için toplama penceresi
 static DWORD g_zoneWarStartTick = 0;
 
 // Kill list yakalayıcı durumu (GZ sonucu textdraw'ları -> dosya + Discord)
-static bool g_zwAutoJoinSent = false;       // son 10 sn'de /gz2 gönderildi mi
 static bool g_zwCapturingKillList = false;  // textdraw toplama aktif mi
 static bool g_zwKillListSent = false;       // sonuç zaten gönderildi mi
 static DWORD g_zwCaptureStart = 0;          // toplama başlangıcı
@@ -71,13 +68,11 @@ static char g_zwPendingName[64] = {0};      // o zone'un yeni sahibi (grup adi)
 static DWORD g_zwPendingTick = 0;           // pending zaman asimi (30 sn)
 
 // Savaş zamanlayıcı (UIF textdraw ID 60): "~r~~h~4~w~-~b~~h~3 ~n~~w~08:27" -> skor + kalan süre.
-// Bot GZ'ye kısa girip bu textdraw'ı yakalar, sonra free-roam'a döner (YS bot yöntemi).
+// Bot GZ'ye GIRMEDEN yakalanabildigi anda skor kullanilir; oto-giris YOK (desync riski).
 static DWORD g_warTimerTick = 0;            // son yakalama zamanı
 static int  g_warRemainingSec = -1;         // yakalanan kalan süre (sn)
-// Kısa GZ girişi: /gz2 (manuel ?gz2 ya da savaş başlangıcı) -> timer yakala -> geri dön.
-static bool   g_zwReturnPending = false;
-static float  g_zwReturnPos[3] = {0, 0, 0};
-static DWORD  g_zwReturnAt = 0;
+// GZ'ye giris kaldirildi: bot savasa katilmaz (desync/kick riski).
+#define MAX_PLAYER_NAME_CACHE
 
 // Gang zone yakalayıcı: UIF zone numaraları haritanın üst solundan (Tierra Robada)
 // başlayarak #0'dan itibaren sıralı oluşturulur -> gang zone ID == zone # kabul edilir.
@@ -1004,7 +999,7 @@ void ProcessZoneScan()
 		// Oto-tarama: spawn'dan 30 sn sonra ilk, sonra her periyotta tekrar.
 		// Yeni grup adlarini /gzinfo'dan ogrenir (YS bot gibi); savas/zgo'da atlanir.
 		DWORD dwNow = GetTickCount();
-		if(iSpawned && !g_inZoneWar && !g_zgoActive && !g_zwReturnPending
+		if(iSpawned && !g_inZoneWar && !g_zgoActive
 			&& g_zoneScanWaitStart != 0 && dwNow - g_zoneScanWaitStart >= 30000
 			&& (g_zoneScanLastRun == 0 || dwNow - g_zoneScanLastRun >= ZONE_SCAN_PERIOD_MS))
 		{
@@ -1347,24 +1342,6 @@ void ConnectionRejected(RPCParameters *rpcParams)
 		Log("ConnectionRejected: unknown");
 }
 
-// GZ'ye KISA giris: mevcut pozisyonu sakla, /gz2 gonder; 3 sn sonra (timer yakalandiktan
-// sonra) free-roam'a geri don. Amac: gercek kalan sureyi textdraw'dan yakalamak
-// (YS bot yontemi). Savas baslangicinda ve ?gz2'de kullanilir; bot iceride KALMAZ.
-static void ZwJoinCaptureReturn()
-{
-	float fPos[3] = {0, 0, 0};
-	if(getPlayerPos(g_myPlayerID, fPos))
-	{
-		g_zwReturnPos[0] = fPos[0]; g_zwReturnPos[1] = fPos[1]; g_zwReturnPos[2] = fPos[2];
-		g_zwReturnPending = true;
-		g_zwReturnAt = GetTickCount() + 3000;
-		Log("[ZONEWAR] Kisa GZ giris yapiliyor, timer yakalanip geri donulecek.");
-		sendServerCommand((char *)"/gz2");
-	}
-	else
-		Log("[ZONEWAR] Pozisyon alinamadi, kisa GZ giris yapilamadi.");
-}
-
 void ClientMessage(RPCParameters *rpcParams)
 {
 	//if(!iGameInited) return;
@@ -1465,15 +1442,13 @@ void ClientMessage(RPCParameters *rpcParams)
 				g_inZoneWar = true;
 				memset(g_zwWelcomed, 0, sizeof(g_zwWelcomed)); // yeni savas: welcome tekrari olmasin
 				// Yeni savas: onceki yakalayici/kill list durumunu sifirla
-				g_zwAutoJoinSent = false;
 				g_zwCapturingKillList = false;
 				g_zwKillListSent = false;
 				g_zwKillListText.clear();
-				// Timer'i textdraw'dan yakalamak icin kisa GZ giris yap (YS bot yontemi):
-				// gercek kalan sure yakalanir, bot free-roam'a geri doner.
+				// Timer'i textdraw'dan yakalamak icin bot GZ'ye GIRILMEZ (desync/kick riski);
+				// kalan sure bilgisi sadece log icindir, oto-giris yok.
 				g_warRemainingSec = -1;
 				g_warTimerTick = 0;
-				ZwJoinCaptureReturn();
 				Log("[ZONEWAR] Savas basladi (zone #%s), sure sayaci baslatildi.", g_zwWarZone);
 				// Grubumuzun adini henuz bilmiyorsak ogrenme moduna gir.
 				// Sonraki ilk "ZONE WAR: X keeps/takes..." mesajindaki X bizim grubumuzdur.
@@ -1584,21 +1559,11 @@ void ClientMessage(RPCParameters *rpcParams)
 				{
 					g_zoneWarStartTick = 0;
 					g_inZoneWar = false;
-					g_zwWarZone[0] = 0; // sonraki savas yeni duyuru sayilir
+g_zwWarZone[0] = 0; // sonraki savas yeni duyuru sayilir
 					g_warRemainingSec = -1;
 					g_warTimerTick = 0;
-					// Kisa GZ girisinde kaldiysak (timer sonrasi donus olmadiysa) geri don.
-					if(g_zwReturnPending)
-					{
-						g_zwReturnPending = false;
-						char szR[64];
-						sprintf_s(szR, sizeof(szR), "/pos %.2f %.2f %.2f", g_zwReturnPos[0], g_zwReturnPos[1], g_zwReturnPos[2]);
-						Log("[ZONEWAR] Savas bitti, free-roam'a donuluyor (%s).", szR);
-						sendServerCommand(szR);
-					}
 
 					// Sonuc textdraw'lari gelmek uzere: henuz yakalayici acilmadiysa ac.
-					// (Normalde son 10 sn'de /gz2 ile acilir; bot iceride kalmadiysa buradan yakala.)
 					if(!g_zwCapturingKillList && !g_zwKillListSent)
 					{
 						g_zwCapturingKillList = true;
@@ -2239,7 +2204,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				SyncGroupColorsToDb();
 				SyncPlayerCacheToDb();
 				// 3) Taramayi baslat: bilinmeyen renkleri /gzinfo'dan ogren
-				if(g_zoneScanIdx < 0 && iSpawned && !g_inZoneWar && !g_zgoActive && !g_zwReturnPending)
+				if(g_zoneScanIdx < 0 && iSpawned && !g_inZoneWar && !g_zgoActive)
 					StartZoneScan(false);
 			}
 			// --- ?zgo <#N | gruptag> : zone'a isinlan, 40 sn bekle, sonra geri don (gruba bildirir) ---
@@ -3518,8 +3483,10 @@ void FinalizeKillList()
 }
 
 // Ana donguden her iterasyonda cagrilir:
-// 1. GZ son 10 sn'de otomatik /gz2 giris yap (bot iceride kalip sonucu alsin)
+// 1. ?pl stats-post zaman asimi cevabi
 // 2. Toplama penceresi dolunca sonucu finalize et (dosya + Discord)
+// Not: Bot GZ'ye otomatik GIRMEZ (desync/kick riski); sonuc textdraw'lari savas
+// bitisinde (wins/loses) disaridan yakalanir.
 void ProcessZoneWarAutoJoin()
 {
 	DWORD dwNow = GetTickCount();
@@ -3554,49 +3521,8 @@ void ProcessZoneWarAutoJoin()
 		}
 	}
 
-	// Kisa GZ girisinde geri donus zamani doldu mu? (timer textdraw'i ~1 sn icinde
-	// yakalanir; 3 sn sonra free-roam'a donulur — bot GZ icinde KALMAZ.)
-	if(g_zwReturnPending && dwNow >= g_zwReturnAt)
-	{
-		g_zwReturnPending = false;
-		char szR[64];
-		sprintf_s(szR, sizeof(szR), "/pos %.2f %.2f %.2f", g_zwReturnPos[0], g_zwReturnPos[1], g_zwReturnPos[2]);
-		Log("[ZONEWAR] Timer yakalandi, free-roam'a donuluyor (%s).", szR);
-		sendServerCommand(szR);
-	}
-
-	// GZ aktif: son 00:02'de GZ'ye gir ve kill/death/assist/DMG textdraw'larini yakala.
-	// Kalan sureyi timer textdraw'inden biliyorsak TAM 00:02'de gireriz (g_warRemainingSec);
-	// timer yoksa 10 sn'lik tahmini pencereye dusulur.
-	if(g_inZoneWar && !g_zwAutoJoinSent)
-	{
-		bool bEnterNow = false;
-		if(g_warTimerTick != 0 && g_warRemainingSec > 0)
-		{
-			int iRem = g_warRemainingSec - (int)((dwNow - g_warTimerTick) / 1000);
-			if(iRem <= ZONE_WAR_AUTOJOIN_WAIT_SEC) bEnterNow = true;
-		}
-		else if(g_zoneWarStartTick != 0
-			&& (dwNow - g_zoneWarStartTick) >= (ZONE_WAR_TOTAL_MS - ZONE_WAR_AUTOJOIN_MS))
-			bEnterNow = true;
-
-		if(bEnterNow)
-		{
-			g_zwAutoJoinSent = true;
-			g_zwCapturingKillList = true;
-			g_zwCaptureStart = dwNow;
-			g_zwKillListText.clear();
-			// Gercek kalan sure: timer textdraw'ina oncelik; yoksa savas baslangic tick'inden.
-			int iRemLog = -1;
-			if(g_warTimerTick != 0)
-				iRemLog = g_warRemainingSec - (int)((dwNow - g_warTimerTick) / 1000);
-			else if(g_zoneWarStartTick != 0)
-				iRemLog = (int)((ZONE_WAR_TOTAL_MS - (dwNow - g_zoneWarStartTick)) / 1000);
-			if(iRemLog < 0) iRemLog = 0;
-			Log("[KILLLIST] GZ son anlara girildi (%d sn kaldi), /gz2 gonderiliyor + yakalayici acildi.", iRemLog);
-			sendServerCommand((char *)"/gz2");
-		}
-	}
+	// Bot GZ'ye hic GIRMEZ (desync/kick riski; kullanici savas ortasinda kick yedi).
+	// Sonuc textdraw'lari savas bitisinde (wins/loses) disaridan yakalanir (bkz. 1558).
 
 	// Toplama penceresi doldu mu? -> finalize et
 	if(g_zwCapturingKillList && !g_zwKillListSent)
