@@ -6,11 +6,6 @@
 
 // Code taken from http://www.rohitab.com/discuss/topic/37441-how-to-change-color-of-selected-text-in-listbox/page__view__findpost__p__10081946
 
-// Child Window/Control IDs
-#define IDC_LBLINFO             100
-#define IDC_LSTCUSTOM           101
-#define IDC_INPUTBOX			102
-
 // Globals
 HWND hwnd, texthwnd, loghwnd, inputhwnd;
 HINSTANCE g_hInst;
@@ -113,6 +108,9 @@ LRESULT CALLBACK MainWindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 			{
 				// Get the text pointer
 				LPTSTR lpText = (LPTSTR)lpDrawItem->itemData;
+				if(!lpText)
+					return TRUE;
+
 				COLORREF textColor = RGB(0, 0, 0);
 				COLORREF bkColor = RGB(255, 255, 255);
 

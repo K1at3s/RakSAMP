@@ -1,24 +1,19 @@
-const mongoose = require('mongoose');
-
-// Discord sunucusu başına ayarlar
-// Kanal ID'leri ayarlanmadıysa null döner
-const GuildSchema = new mongoose.Schema({
-    guildId: { type: String, required: true, unique: true },
-    linkedHwids: { type: [String], default: [] },
-
-    // Kanal ID'leri (ayarlanmamışsa null)
-    warChannelId: { type: String, default: null },
-    gstatsChannelId: { type: String, default: null },
-    logChannelId: { type: String, default: null },
-    groupChatChannelId: { type: String, default: null },
-    zoneWarChannelId: { type: String, default: null },  // ZONE WAR bildirimleri
-    backupChannelId: { type: String, default: null },   // ?1414 backup çağrıları
-    welcomeChannelId: { type: String, default: null },  // welcome back mesajları
-
-    // Grup chat <-> Discord köprüsü (oyun içi ?discordchat ile aç/kapat, MongoDB'de saklanır)
-    groupChatEnabled: { type: Boolean, default: false },
-
-    createdAt: { type: Date, default: Date.now }
+// Guild: MySQL/ProxySQL shim (db.js). Alan adları kodun geri kalanının beklediği gibi.
+module.exports = require('../db').model('guilds', {
+    pkey: 'guildId',
+    fields: {
+        guildId: { col: 'guild_id', type: 'text', pk: true },
+        linkedHwids: { col: 'linked_hwids', type: 'json', def: [] },
+        logChannelId: { col: 'log_channel_id', type: 'text', def: null },
+        warChannelId: { col: 'war_channel_id', type: 'text', def: null },
+        gstatsChannelId: { col: 'gstats_channel_id', type: 'text', def: null },
+        groupChatChannelId: { col: 'group_chat_channel_id', type: 'text', def: null },
+        zoneWarChannelId: { col: 'zone_war_channel_id', type: 'text', def: null },
+        backupChannelId: { col: 'backup_channel_id', type: 'text', def: null },
+        welcomeChannelId: { col: 'welcome_channel_id', type: 'text', def: null },
+        groupChatEnabled: { col: 'group_chat_enabled', type: 'int', def: 0 },
+        lang: { col: 'lang', type: 'text', def: 'en' },
+        groupName: { col: 'group_name', type: 'text', def: '' },
+        createdAt: { col: 'created_at', type: 'text', def: () => new Date().toISOString() }
+    }
 });
-
-module.exports = mongoose.model('Guild', GuildSchema);

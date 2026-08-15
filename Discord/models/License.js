@@ -1,13 +1,11 @@
-const mongoose = require('mongoose');
-
-// HWID bazlı RakSAMP lisans şeması
-const LicenseSchema = new mongoose.Schema({
-    hwid: { type: String, required: true, unique: true },
-    isApproved: { type: Boolean, default: false },
-    // Welcome back ayarları (kişiye özel, oyun içi ?greet / ?welcomemsg ile değiştirilir)
-    welcomeEnabled: { type: Boolean, default: true },
-    welcomeMessage: { type: String, default: '' },
-    createdAt: { type: Date, default: Date.now }
+// License: MySQL/ProxySQL shim (db.js).
+module.exports = require('../db').model('licenses', {
+    pkey: 'hwid',
+    fields: {
+        hwid: { col: 'hwid', type: 'text', pk: true },
+        isApproved: { col: 'is_approved', type: 'int', def: 0 },
+        welcomeEnabled: { col: 'welcome_enabled', type: 'int', def: 1 },
+        welcomeMessage: { col: 'welcome_message', type: 'text', def: '' },
+        createdAt: { col: 'created_at', type: 'text', def: () => new Date().toISOString() }
+    }
 });
-
-module.exports = mongoose.model('License', LicenseSchema);

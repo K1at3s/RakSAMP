@@ -7,7 +7,7 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('astats')
         .setDescription('RakSAMP hesap istatistikleri (account ID gerekli)')
-        .addIntegerOption(o => o.setName('account_id').setDescription('Hesap (account) ID si').setRequired(true)),
+        .addStringOption(o => o.setName('account_id').setDescription('Hesap (account) ID si').setRequired(true)),
     async execute(interaction) {
         const guild = await Guild.findOne({ guildId: interaction.guildId });
 
@@ -19,7 +19,7 @@ module.exports = {
         }
 
         const hwid = guild.linkedHwids[0];
-        const accountId = interaction.options.getInteger('account_id');
+        const accountId = interaction.options.getString('account_id');
 
         await interaction.deferReply({ ephemeral: true });
         setPendingInteraction(interaction.id, interaction);
