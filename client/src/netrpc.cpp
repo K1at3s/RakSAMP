@@ -179,6 +179,8 @@ static bool g_harvestInFlight = false;   // /gstats sorgusu sonucu bekleniyor
 static char g_harvestTag[64] = {0};      // sorgulanan tag
 static const char *g_szColorsFile = "group_colors.txt";
 static const char *g_szLangFile    = "bot_lang.txt";
+static char g_ysFlashMsg[192] = {0};   // son YS "Flashing Zones: Ad(n) | ..." mesaji ("!" on-eki yok)
+static DWORD g_ysFlashMsgTick = 0;     // 0: henuz gelmedi; 40 sn gecerlilik
 static void SyncPlayerCacheToDb();
 static void SyncGroupColorsToDb();
 
@@ -741,6 +743,16 @@ static bool IsNumericTag(const char *t)
 
 void BuildFlashZoneSummary()
 {
+	// YS bot son 40 sn icinde "Flashing Zones: Ad(n) | ..." attiysa isimler
+	// dogrudan hazirdir; renk histogrami yerine onu yanitla ("?" yok).
+	if(g_ysFlashMsg[0] && GetTickCount() - g_ysFlashMsgTick < 40000)
+	{
+		g_bridgeSuppressEcho++;
+		Log("[ZF] YS dagilimi tekrarlandi: %s", g_ysFlashMsg);
+		sendChat(g_ysFlashMsg);
+		return;
+	}
+
 	struct { unsigned int c; int n; } agg[256];
 	int aggCount = 0, total = 0;
 	for(int zid = 0; zid < MAX_GANG_ZONES; zid++)
@@ -1803,6 +1815,24 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				{
 					AddFlashTags(pGroupMsg);
 					SyncFlashGroupColors(pGroupMsg); // renk<->isim eslesmesini aninda ogren
+					// YS dagilimini sakla: ?zf bu isimleri dogrudan yanitlar ("?" gostermez).
+					const char *pFz = strstr(pGroupMsg, "Flashing Zones:");
+					if(pFz)
+					{
+						const char *pRest = pFz + strlen("Flashing Zones:");
+						while(*pRest == ' ' || *pRest == '|') pRest++;
+						char szBody[160] = {0};
+						strncpy_s(szBody, sizeof(szBody) - 1, pRest, sizeof(szBody) - 1);
+						// "|" ayiracli kuyruk bos ise at; body'yi sabitle
+						while(szBody[0] && (szBody[strlen(szBody)-1] == ' ' || szBody[strlen(szBody)-1] == '|'))
+							szBody[strlen(szBody)-1] = 0;
+						if(szBody[0])
+						{
+							sprintf_s(g_ysFlashMsg, sizeof(g_ysFlashMsg), "!Flashing Zones: %s", szBody);
+							g_ysFlashMsgTick = GetTickCount();
+							Log("[ZF] YS dagilimi kaydedildi: %s", g_ysFlashMsg);
+						}
+					}
 				}
 				Log("[ZF] YS flash mesaji: %s", pGroupMsg);
 				return; // normal komut islemine sokma
