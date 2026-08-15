@@ -131,7 +131,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 		if (iAreWeConnected && iGameInited)
 		{
-			// Zone war: son 10 sn'de otomatik /gz2 giris + GZ sonuc textdraw yakalama
+			// Zone war: ?pl zaman asimi + GZ sonuc textdraw yakalama (bot GZ'ye girmez)
 			ProcessZoneWarAutoJoin();
 
 			// Cache + grup renklerini backend'e (MySQL) yazar (60 sn'de bir)
