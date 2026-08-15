@@ -460,6 +460,8 @@ app.post('/api/killlist', async (req, res) => {
         return res.json({ success: false, message: "Kill list boş." });
     }
 
+    // 1024 karakteri aşarsa embed sığmaz -> text dosyası olarak at (Discord
+    // embed description limiti 4096 ama 1024'ten sonra okunmaz hale gelir).
     const embed = new EmbedBuilder()
         .setTitle("⚔️ GZ Sonuc / Kill List")
         .setDescription(`\`\`\`\n${killList}\n\`\`\``)
@@ -470,8 +472,19 @@ app.post('/api/killlist', async (req, res) => {
     if (enemyGroup) embed.addFields({ name: 'Rakip Grup', value: enemyGroup, inline: true });
     embed.setFooter({ text: `${playerName} tarafından alındı` });
 
-    const channelId = await sendToGuildChannel(guild, 'zoneWarChannelId', { embed });
-    console.log(`⚔️ KILLLIST (guild=${guild.guildId}, kanal=${channelId || 'null'}): ${killList.slice(0, 200)}`);
+    let channelId;
+    if (killList.length > 1024) {
+        channelId = await sendToGuildChannel(guild, 'zoneWarChannelId', {
+            files: [{
+                attachment: Buffer.from(killList, 'utf8'),
+                name: `gz-sonuc-${Date.now()}.txt`
+            }]
+        });
+        console.log(`📄 KILLLIST (guild=${guild.guildId}, kanal=${channelId || 'null'}): 1024+ karakter, dosya olarak gönderildi (${killList.length} bayt)`);
+    } else {
+        channelId = await sendToGuildChannel(guild, 'zoneWarChannelId', { embed });
+        console.log(`⚔️ KILLLIST (guild=${guild.guildId}, kanal=${channelId || 'null'}): ${killList.slice(0, 200)}`);
+    }
 
     return res.json({ success: true, channelId });
 });

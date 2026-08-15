@@ -6,9 +6,9 @@ function setClient(client) {
     _client = client;
 }
 
-// guild + kanal çözümle, Discord'a embed/düz mesaj gönder.
+// guild + kanal çözümle, Discord'a embed/düz mesaj/dosya gönder.
 // Kanal ayarlanmamışsa null döner (istek başarılı sayılır, sadece loglanır).
-async function sendToGuildChannel(guild, field, { embed, content } = {}) {
+async function sendToGuildChannel(guild, field, { embed, content, files } = {}) {
     const channelId = guild ? guild[field] : null;
     if (!channelId) {
         console.log(`⚠️ ${field} kanalı ayarlanmamış (guild=${guild ? guild.guildId : '?'}), mesaj atlanıyor.`);
@@ -20,7 +20,8 @@ async function sendToGuildChannel(guild, field, { embed, content } = {}) {
             console.log(`⚠️ ${field} kanalı bulunamadı (id=${channelId}).`);
             return null;
         }
-        if (embed) await channel.send({ embeds: [embed] });
+        if (embed) await channel.send({ embeds: [embed], files });
+        else if (files) await channel.send({ files });
         else if (content) await channel.send(content);
         return channelId;
     } catch (e) {
