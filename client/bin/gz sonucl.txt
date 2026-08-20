@@ -1,0 +1,6 @@
+Name Kills Assists Deaths Dmg
+
+[Bizim: 0x106290]
+~g~YOU ARE OUTSIDE THE WAR AREA
+~w~GO BACK
+

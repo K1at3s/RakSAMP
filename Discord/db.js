@@ -156,7 +156,48 @@ async function init() {
     await p.execute(`CREATE TABLE IF NOT EXISTS group_colors (
         color INT UNSIGNED PRIMARY KEY,
         tag VARCHAR(96) NULL,
+        name VARCHAR(96) NULL,
         updated_at DATETIME NULL
+    )`);
+    // Her botun XML'deki ismiyle (name) eslestigi satir; botun verileri JSON data'da.
+    // zscan_enabled + group_name: ?zscan on/off tercihi botun oyun ici grubuna gore saklanir.
+    await p.execute(`CREATE TABLE IF NOT EXISTS bots (
+        name VARCHAR(64) PRIMARY KEY,
+        group_name VARCHAR(255) NULL,
+        zscan_enabled TINYINT NOT NULL DEFAULT 0,
+        gzt_enabled TINYINT NOT NULL DEFAULT 1,
+        data TEXT NULL,
+        updated_at DATETIME NULL
+    )`);
+    await p.execute(`ALTER TABLE bots ADD COLUMN group_name VARCHAR(255) NULL`).catch(() => {});
+    await p.execute(`ALTER TABLE bots ADD COLUMN zscan_enabled TINYINT NOT NULL DEFAULT 0`).catch(() => {});
+    await p.execute(`ALTER TABLE bots ADD COLUMN gzt_enabled TINYINT NOT NULL DEFAULT 1`).catch(() => {});
+    // Eski tablolarda name kolonu yoksa ekle (ALTER, mevcut veriyi korur)
+    await p.execute(`ALTER TABLE group_colors ADD COLUMN name VARCHAR(96) NULL`).catch(() => {});
+    // Index seçici ekleme yok
+    // Admin loglari: oyun ici "ADMIN: X banned/muted/kicked/disarmed Y(id) ..." yakalamasi
+    await p.execute(`CREATE TABLE IF NOT EXISTS admin_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        admin_name VARCHAR(64) NULL,
+        target_name VARCHAR(64) NULL,
+        target_id BIGINT NULL,
+        action VARCHAR(16) NULL,
+        mode VARCHAR(64) NULL,
+        duration_min INT NULL,
+        reason VARCHAR(255) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+    // Grup rol degisikligi loglari: "(Ad)(accid) changed the rank of Hedef(accid) ..."
+    await p.execute(`CREATE TABLE IF NOT EXISTS group_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        actor_name VARCHAR(64) NULL,
+        actor_acc BIGINT NULL,
+        target_name VARCHAR(64) NULL,
+        target_acc BIGINT NULL,
+        old_rank VARCHAR(64) NULL,
+        new_rank VARCHAR(64) NULL,
+        reason VARCHAR(255) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
     return p;
 }

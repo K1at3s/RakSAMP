@@ -144,6 +144,7 @@ int sampConnect(char *szHostname, int iPort, char *szNickname, char *szPassword,
 	g_bridgeSuppressEcho = 0;
 	g_frSentOnce = false; // yeni oturumda /fr tek gonderim icin flag'i sifirla
 	LoadPlayerCache();    // ?pl istatistik/adin cache'ini dosyadan yukle
+	InitGroupColorsFromDisk(); // kalici grup rengi/tag kayitlarini dosyadan yukle
 
 	pRakClient->SetPassword(szPassword);
 	return (int)pRakClient->Connect(szHostname, iPort, 0, 0, 5);
@@ -476,15 +477,26 @@ char *getPlayerName(PLAYERID iPlayerID)
 
 int getPlayerPos(PLAYERID iPlayerID, float *fPos)
 {
-	if(!playerInfo[iPlayerID].iIsConnected) return 0;
+	if(iPlayerID < 0 || iPlayerID >= MAX_PLAYERS) return 0;
 
-	if(iPlayerID > 0 && iPlayerID <= MAX_PLAYERS)
+	// Kendi oyuncumuz: kendi ID'si icin WorldPlayerAdd gelmeyebilir (iIsConnected
+	// false kalir), ama oyundaysak konumumuz gecerli veridir. Diger oyuncular
+	// bagli olmali.
+	if(iPlayerID != g_myPlayerID && !playerInfo[iPlayerID].iIsConnected) return 0;
+
+	if(iPlayerID == g_myPlayerID)
 	{
-		memcpy(fPos, playerInfo[iPlayerID].onfootData.vecPos, sizeof(float) * 3);
+		// Kendi pozisyonu sunucudan geri gelmez (kendi sync'imizi biz gonderiyoruz);
+		// gercek konum settings.fCurrentPosition'da tutulur.
+		if(settings.fCurrentPosition[0] == 0.0f
+			&& settings.fCurrentPosition[1] == 0.0f
+			&& settings.fCurrentPosition[2] == 0.0f) return 0;
+		memcpy(fPos, settings.fCurrentPosition, sizeof(float) * 3);
 		return 1;
 	}
 
-	return 0;
+	memcpy(fPos, playerInfo[iPlayerID].onfootData.vecPos, sizeof(float) * 3);
+	return 1;
 }
 
 PLAYERID getPlayerIDFromPlayerName(char *szName)

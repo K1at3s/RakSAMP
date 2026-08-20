@@ -91,6 +91,14 @@ int RunCommand(char *szCMD, int iFromAutorun)
 
 	if(szCMD[0] != '!')
 	{
+		// ? ile baslayan grup komutlari (?zf, ?zgo, ?gzt, ?zgrp...) lokal islenir;
+		// chat'e gonderilmez (mute riski + cift islem). HandleGroupCommand'e ver.
+		if(szCMD[0] == '?')
+		{
+			HandleGroupCommand(szCMD, -1);
+			return 1;
+		}
+
 		// SERVER CHAT OR COMMAND
 		if(szCMD[0] == '/')
 			sendServerCommand(szCMD);

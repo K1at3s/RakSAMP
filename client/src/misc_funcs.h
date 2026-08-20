@@ -29,6 +29,10 @@ void selectTextDraw(int iTextDrawID);
 extern bool g_frSentOnce;
 void StartFrRetry();
 
+// netrpc.cpp: kalici grup rengi/tag kayitlarini (group_colors.txt) dosyadan yukler
+// (baglanti baslarinda cagrilir — restart'ta yeniden ogrenme mute riski olmasin).
+void InitGroupColorsFromDisk();
+
 int isPlayerConnected(PLAYERID iPlayerID);
 int getPlayerID(char *szPlayerName);
 char *getPlayerName(PLAYERID iPlayerID);
