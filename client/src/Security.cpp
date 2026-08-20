@@ -33,8 +33,6 @@ bool g_gstatsSentFirst = false;
 std::string g_gstatsRequesterId = "";
 // Komut parametresi (/gstats 5, /stats 5, /astats 5 gibi) — ID dialogu submit'inde kullanilir
 std::string g_gstatsInput = "";
-// ?zf grup tag haritasi: /gstats sonucu harvest modunda islenip Discord'a gonderilmez
-bool g_gstatsHarvestMode = false;
 bool g_waitingForPNetStats = false;
 unsigned long g_pnetstatsReqTime = 0;
 bool g_inZoneWar = false;
@@ -126,6 +124,16 @@ bool PerformSecurityHandshake(const std::string& serverUrl) {
     std::cout << "📋 HWID Pano'ya Kopyalandi: " << g_myHWID << "\n";
     std::cout << "💬 Discord uzerinden yoneticiye bu kodu iletin.\n";
     std::cout << "-------------------------------------------\n";
+
+    // Backend ayakta degilse (Discord botu kapali) kullaniciya belirgin uyari goster
+    if (!res || res->status != 200) {
+        MessageBoxA(NULL,
+            "Discord botu kapalı olduğu için RakSAMP açılamıyor.\n\n"
+            "Lütfen Discord botunun (backend sunucusunun) çalıştığından emin olun ve tekrar deneyin.\n\n"
+            "HWID pano'ya kopyalandı.",
+            "RakSAMP - Bağlantı Hatası",
+            MB_OK | MB_ICONERROR);
+    }
 
     Sleep(5000);
     ExitProcess(0);
@@ -385,32 +393,7 @@ void SendBackupCall(const char *playerName) {
     }
 }
 
-// 10. Oyun içi zone war olayı — keeps/takes/wins/loses → zonewar kanalına embed
-void SendZoneWarEvent(const char *action, const char *zoneName) {
-    if (!g_isEngineActive || g_sessionToken.empty()) return;
-    if (action == NULL) return;
-
-    httplib::Client cli(g_backendBase);
-    cli.set_connection_timeout(5);
-
-    json body = {
-        {"hwid", g_myHWID},
-        {"playerName", std::string(g_szNickName ? g_szNickName : "Bir oyuncu")},
-        {"ownGroup", g_myGroupName},
-        {"enemyGroup", g_enemyGroupName},
-        {"action", std::string(action)},
-        {"zoneName", zoneName ? std::string(zoneName) : ""}
-    };
-
-    auto res = cli.Post("/api/zonewar", body.dump(), "application/json");
-    if (res && res->status == 200) {
-        std::cout << "⚔️ [ZONEWAR] Discord'a zone war olayi gonderildi!\n";
-    } else {
-        std::cout << "⚠️ [ZONEWAR] Gonderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
-    }
-}
-
-// 11. Oyun içi welcome back — "X logged in" → welcome kanalına embed
+// 10. Oyun içi welcome back — "X logged in" → welcome kanalına embed
 void SendWelcomeBack(const char *playerName) {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
     if (playerName == NULL) return;

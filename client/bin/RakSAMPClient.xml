@@ -23,7 +23,7 @@ Avalable runmodes:
 	<normal_pos position="325.35 2512.09 16.56" rotation="0.0" force="0" />
 
 	<!-- These get called when we successfully connected to a server. -->
-	<!-- <autorun>!selveh 4</autorun> -->
+	<!-- autorun>?zf</autorun> -->
 	
 	<!-- Finds text from the chatbox and says something. -->
 	<!-- <find text="PM from" say="" bk_color="255 255 255" text_color="255 0 0" /> -->

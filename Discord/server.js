@@ -396,51 +396,6 @@ app.post('/api/warhelp', async (req, res) => {
     return res.json({ success: true, channelId });
 });
 
-// ZONE WAR bildirimi (oyun içi zone war algılandığında)
-// action: keeps | takes | wins | loses
-app.post('/api/zonewar', async (req, res) => {
-    const body = req.body || {};
-    const guild = await resolveGuildForRakSAMP(body);
-
-    if (!guild) {
-        return res.json({ success: false, message: "Bağlı Discord sunucusu bulunamadı." });
-    }
-
-    const playerName = body.playerName || 'Bir oyuncu';
-    const ownGroup = body.ownGroup || '';
-    const enemyGroup = body.enemyGroup || '';
-    const action = body.action || 'keeps';
-    const zoneName = body.zoneName || '';
-
-    const actionText = {
-        keeps: 'keeps zone',
-        takes: 'takes over the zone',
-        wins: 'wins against',
-        loses: 'loses to',
-        join: 'is fighting a Zone War'
-    }[action] || action;
-
-    let description;
-    if (action === 'wins' || action === 'loses') {
-        description = `**${ownGroup || playerName}** ${actionText} **${enemyGroup || '?'}**`;
-    } else if (action === 'join') {
-        description = `**${ownGroup || playerName}** ${actionText}`;
-    } else {
-        description = `**${ownGroup || playerName}** ${actionText}${zoneName ? ` **${zoneName}**` : ''}`;
-    }
-
-    const embed = new EmbedBuilder()
-        .setTitle("⚔️ ZONE WAR")
-        .setDescription(description)
-        .setColor(action === 'loses' ? 0xFF0000 : 0xFFA500)
-        .setTimestamp();
-
-    const channelId = await sendToGuildChannel(guild, 'zoneWarChannelId', { embed });
-    console.log(`⚔️ ZONEWAR (guild=${guild.guildId}, kanal=${channelId || 'null'}): ${description}`);
-
-    return res.json({ success: true, channelId });
-});
-
 // GZ sonucu / kill list — oyun içi GZ bittiğinde toplanan textdraw sonucu
 // (gz sonucl.txt) zonewar kanalına embed olarak gönderilir.
 app.post('/api/killlist', async (req, res) => {
@@ -509,7 +464,155 @@ app.post('/api/backup', async (req, res) => {
     return res.json({ success: true, channelId });
 });
 
-// welcome back mesajı (GROUP: X logged in → oyun içi welcome)
+// arka plan görevleri başlasın
+
+// Admin eylem logu — oyun içi "ADMIN: X banned Y ... (REASON: Z)" yakalaması
+// DB'ye kaydedilir. Discord embed yok (kalabalık yapmasın); /alog ile sorgulanır.
+app.post('/api/adminlog', async (req, res) => {
+    const body = req.body || {};
+    const guild = await resolveGuildForRakSAMP(body);
+    if (!guild) {
+        return res.json({ success: false, message: "Bağlı Discord sunucusu bulunamadı." });
+    }
+
+    const targetName = String(body.targetName || '').trim().slice(0, 64);
+    const action = String(body.action || '').trim().slice(0, 16);
+    if (!targetName || !action) {
+        return res.json({ success: false, message: "targetName/action zorunlu." });
+    }
+
+    await db.execute(
+        `INSERT INTO admin_logs (admin_name, target_name, target_id, action, mode, duration_min, reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+            String(body.adminName || '').trim().slice(0, 64),
+            targetName,
+            body.targetId ? Number(body.targetId) : null,
+            action,
+            String(body.mode || '').trim().slice(0, 64),
+            body.durationMin ? Number(body.durationMin) : null,
+            String(body.reason || '').trim().slice(0, 255)
+        ]
+    );
+    console.log(`📝 ADMINLOG (guild=${guild.guildId}): ${body.adminName || '?'} ${action} ${targetName} (mode=${body.mode || '-'}, reason=${body.reason || '-'})`);
+    return res.json({ success: true });
+});
+
+// Grup rol değişikliği logu — "(Ad)(accid) changed the rank of ..." yakalaması
+app.post('/api/grouplog', async (req, res) => {
+    const body = req.body || {};
+    const guild = await resolveGuildForRakSAMP(body);
+    if (!guild) {
+        return res.json({ success: false, message: "Bağlı Discord sunucusu bulunamadı." });
+    }
+
+    await db.execute(
+        `INSERT INTO group_logs (actor_name, actor_acc, target_name, target_acc, old_rank, new_rank)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+            String(body.actorName || '').trim().slice(0, 64),
+            body.actorAcc ? Number(body.actorAcc) : null,
+            String(body.targetName || '').trim().slice(0, 64),
+            body.targetAcc ? Number(body.targetAcc) : null,
+            String(body.oldRank || '').trim().slice(0, 64),
+            String(body.newRank || '').trim().slice(0, 64)
+        ]
+    );
+    console.log(`📝 GROUPLOG (guild=${guild.guildId}): ${body.actorName || '?'} ${body.oldRank || '?'} -> ${body.newRank || '?'} (${body.targetName || '?'})`);
+    return res.json({ success: true });
+});
+
+// ?post — son rol değişikliği + gerekçe Discord'a embed olarak gider
+app.post('/api/grouppost', async (req, res) => {
+    const body = req.body || {};
+    const guild = await resolveGuildForRakSAMP(body);
+    if (!guild) {
+        return res.json({ success: false, message: "Bağlı Discord sunucusu bulunamadı." });
+    }
+
+    const reason = String(body.reason || '').trim().slice(0, 255);
+    if (!reason) {
+        return res.json({ success: false, message: "Gerekçe boş." });
+    }
+
+    // son log kaydına gerekçeyi de işle (varsa)
+    await db.execute(
+        `UPDATE group_logs SET reason = ? WHERE id = (SELECT MAX(id) FROM group_logs)`,
+        [reason]
+    ).catch(() => {});
+
+    const embed = new EmbedBuilder()
+        .setTitle("📋 Rol Değişikliği Gerekçesi")
+        .setDescription(`**${body.actorName || 'Bir yönetici'}** rol değişikliği yaptı.`)
+        .setColor(0x0099FF)
+        .addFields(
+            { name: 'Oyuncu', value: `${body.targetName || '?'}${body.targetAcc ? ` (acc ${body.targetAcc})` : ''}`, inline: true },
+            { name: 'Değişiklik', value: `\`${body.oldRank || '-'}\` → \`${body.newRank || '-'}\``, inline: true },
+            { name: 'Gerekçe', value: reason }
+        )
+        .setFooter({ text: `${body.playerName || 'Oyun içi'}` })
+        .setTimestamp();
+
+    const channelId = await sendToGuildChannel(guild, 'groupChatChannelId', { embed });
+    console.log(`📨 GROUPPOST (guild=${guild.guildId}, kanal=${channelId || 'null'}): ${body.targetName} ${body.oldRank}->${body.newRank} (${reason})`);
+    return res.json({ success: true, channelId });
+});
+
+// ?alog sorgusu — oyuncu adı / id / accid'e göre admin log sayı özeti
+app.post('/api/alog', async (req, res) => {
+    const body = req.body || {};
+    const guild = await resolveGuildForRakSAMP(body);
+    if (!guild) {
+        return res.json({ success: false, message: "Bağlı Discord sunucusu bulunamadı." });
+    }
+
+    const q = String(body.q || '').trim();
+    if (!q) {
+        return res.json({ success: false, message: "Sorgu boş." });
+    }
+
+    // isim (büyük/küçük duyarsız parça) veya ID/accid tam eşleşme
+    let rows;
+    if (/^\d+$/.test(q)) {
+        rows = await db.execute(
+            `SELECT action, mode, COUNT(*) AS cnt
+             FROM admin_logs
+             WHERE target_id = ?
+             GROUP BY action, mode
+             ORDER BY cnt DESC, action, mode`,
+            [Number(q)]
+        );
+    } else {
+        rows = await db.execute(
+            `SELECT action, mode, COUNT(*) AS cnt
+             FROM admin_logs
+             WHERE LOWER(target_name) LIKE LOWER(?)
+             GROUP BY action, mode
+             ORDER BY cnt DESC, action, mode`,
+            [`%${q}%`]
+        );
+    }
+
+    if (!rows || rows.length === 0) {
+        return res.json({ success: true, summary: `Kayıt yok: ${q}` });
+    }
+
+    // "ban: 3 (CNR: 2, PTP: 1) | mute: 2" gibi kompakt özet
+    const byName = {};
+    for (const r of rows) {
+        const k = r.action || 'bilinmeyen';
+        if (!byName[k]) byName[k] = [];
+        byName[k].push({ mode: r.mode || '-', cnt: Number(r.cnt) });
+    }
+    const parts = Object.entries(byName).map(([act, list]) => {
+        const total = list.reduce((s, x) => s + x.cnt, 0);
+        const detail = list.map(x => `${x.mode}: ${x.cnt}`).join(', ');
+        return `${act} ${total} (${detail})`;
+    });
+    const summary = parts.join(' | ').slice(0, 200);
+    console.log(`📊 ALOG (guild=${guild.guildId}): q="${q}" -> ${rows.length} satır`);
+    return res.json({ success: true, summary });
+});
 app.post('/api/welcome', async (req, res) => {
     const body = req.body || {};
     const guild = await resolveGuildForRakSAMP(body);
@@ -822,19 +925,34 @@ app.post('/api/player/cache', async (req, res) => {
 });
 
 // RakSAMP client'ı: grup renk haritasını DB'ye push eder.
-// Body: { colors: [{ color, tag }, ...] } — color üzerinden upsert.
+// Body: { colors: [{ color, tag, name }, ...] } — color üzerinden upsert.
 app.post('/api/group/colors', async (req, res) => {
     const colors = (req.body || {}).colors;
     if (!Array.isArray(colors)) return res.status(400).json({ success: false, message: "colors bekleniyor" });
-    const rows = colors
-        .filter(c => Number.isInteger(c.color) && c.color > 0)
-        .map(c => [c.color >>> 0, String(c.tag || '').slice(0, 96), new Date()]);
-    if (!rows.length) return res.json({ success: true, count: 0 });
+    // color PRIMARY key oldugu icin ayni renk birden fazla grup kaydinda gecerse
+    // ilki kazanir (sonraki duplicated atlanir). Tek istek icinde bile tekrar varsa
+    // dedup edip INSERT IGNORE'a ekstra guvence sagla (Duplicate entry hatasi olmasin).
+    const seen = new Set();
+    const rows = [];
+    for (const c of colors) {
+        if (!Number.isInteger(c.color) || c.color <= 0) continue;
+        const col = c.color >>> 0;
+        if (seen.has(col)) continue;
+        seen.add(col);
+        rows.push([col, String(c.tag || '').slice(0, 96), String(c.name || c.tag || '').slice(0, 96), new Date()]);
+    }
     try {
         // Renk haritası da sil-üstüne-yaz: eski grup kayıtları veride kalmaz.
+        // Bos liste de DELETE tetikler (client DB'yi sifirlamak icin bos push yapabilir).
         await db.execute('DELETE FROM group_colors');
+        if (!rows.length) {
+            console.log('🎨 GROUP-COLORS: liste bos, DB temizlendi');
+            return res.json({ success: true, count: 0 });
+        }
+        // Ayni renk iki gruba ait olabiliyor (client tekillesitirir ama garanti olsun):
+        // IGNORE ile ilk kayit kazanir, PRIMARY (color) cakismasi hata vermez.
         await db.query(
-            `INSERT INTO group_colors (color, tag, updated_at) VALUES ?`,
+            `INSERT IGNORE INTO group_colors (color, tag, name, updated_at) VALUES ?`,
             [rows]
         );
         console.log(`🎨 GROUP-COLORS: ${rows.length} renk DB'ye yazildi`);
@@ -842,6 +960,45 @@ app.post('/api/group/colors', async (req, res) => {
     } catch (err) {
         console.error('GROUP-COLORS hatasi:', err.message);
         return res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// RakSAMP client: her botun XML'deki ismiyle (name) eşleşen satırı upsert eder
+// (her bot için DB'de tek satır). Body: { name, data, groupName, zscan }.
+app.post('/api/bot/status', async (req, res) => {
+    const body = req.body || {};
+    const name = String(body.name || '').trim().slice(0, 64);
+    if (!name) return res.json({ success: false, message: "name bekleniyor" });
+    const data = (body.data !== undefined) ? JSON.stringify(body.data) : null;
+    const groupName = String(body.groupName || '').slice(0, 255);
+    const zscan = body.zscan ? 1 : 0;
+    const gzt = (body.gzt === undefined) ? 1 : (body.gzt ? 1 : 0);
+    try {
+        await db.execute(
+            `INSERT INTO bots (name, group_name, zscan_enabled, gzt_enabled, data, updated_at) VALUES (?,?,?,?,?,?)
+             ON DUPLICATE KEY UPDATE group_name=VALUES(group_name), zscan_enabled=VALUES(zscan_enabled), gzt_enabled=VALUES(gzt_enabled), data=VALUES(data), updated_at=VALUES(updated_at)`,
+            [name, groupName, zscan, gzt, data, new Date()]
+        );
+        console.log(`🤖 BOT-STATUS: '${name}' DB'ye yazildi (zscan=${zscan}, gzt=${gzt})`);
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('BOT-STATUS hatasi:', err.message);
+        return res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// ?zscan / ?gzt on/off tercihlerini gruba gore oku: client acilisinda grubunun durumunu ceker.
+app.get('/api/bot/toggles', async (req, res) => {
+    const group = String(req.query.group || '').slice(0, 255);
+    if (!group) return res.json({ success: false, zscan: 0, gzt: 1, message: "group bekleniyor" });
+    try {
+        const rows = await db.execute('SELECT zscan_enabled, gzt_enabled FROM bots WHERE group_name=? ORDER BY updated_at DESC LIMIT 1', [group]);
+        const zscan = (rows && rows[0] && rows[0].zscan_enabled) ? 1 : 0;
+        const gzt = (rows && rows[0] && rows[0].gzt_enabled === undefined) ? 1 : (rows[0].gzt_enabled ? 1 : 0);
+        return res.json({ success: true, zscan, gzt });
+    } catch (err) {
+        console.error('BOT-TOGGLES hatasi:', err.message);
+        return res.status(500).json({ success: false, zscan: 0, gzt: 1, message: err.message });
     }
 });
 

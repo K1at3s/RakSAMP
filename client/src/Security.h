@@ -17,8 +17,6 @@ extern bool g_gstatsAutoSubmit;
 extern bool g_gstatsSentFirst;
 extern std::string g_gstatsRequesterId;
 extern std::string g_gstatsInput;
-// ?zf grup tag haritasi: /gstats sonucu harvest modunda islenip Discord'a gonderilmez
-extern bool g_gstatsHarvestMode;
 extern bool g_waitingForPNetStats;
 extern unsigned long g_pnetstatsReqTime;
 extern bool g_inZoneWar;
@@ -39,6 +37,9 @@ extern char g_szNickName[32];
 extern bool g_waitingForAdmins;
 extern unsigned long g_adminsReqTime;
 extern std::string g_adminsRequesterId;
+// /groups sonuc dialogu bekleyen flag (?zgrp harvest)
+extern bool g_waitingForGroups;
+extern unsigned long g_groupsReqTime;
 
 // Grup chat <-> Discord kopusu
 extern bool g_groupChatEnabled;
@@ -67,12 +68,16 @@ bool ServerSetGuildId(const char *guildId);
 void SendGStatsToDiscord(const char *szInfo);
 void SendAdminsToDiscord(const char *szInfo);
 void SendBackupCall(const char *playerName);
-void SendZoneWarEvent(const char *action, const char *zoneName);
 void SendWelcomeBack(const char *playerName);
 void PollCommands();
 void SendKillList(const std::string& killListText);
 void ProcessZoneWarAutoJoin();
 void ProcessZgoReturn();
+void ProcessZtkTick();
+// ?zgrp grup ogrenme harvester'i: /groups + /gstats <ID> zinciri
+void OnGroupsListCaptured(const char *szInfo);
+void ProcessGhpHarvestStep();
+bool OnGStatsResultForHarvest(const char *szInfo);
 // Cache + grup renklerini backend'e (MySQL) yazar; main loop 60 sn'de bir çağırır
 void ProcessDbSync();
 void StartFrRetry();
@@ -81,12 +86,11 @@ void ToggleWelcomeBack();
 void SetWelcomeMessage(const char *message);
 void RefreshWelcomeState();
 // ?zf grup tag haritasi
-void CreateGroupHarvest();
-void ProcessGroupHarvest();
 void ProcessZoneScan();
-void HarvestParseGstatsResult(const char *szInfo);
 void BuildFlashZoneSummary();
 void ProcessZfFlashSummary();
+// /gstats sonucundan "- Tag: [XX]" cekip grup etiketini gunceller
+void LearnGroupTagFromGStats(const char *szInfo);
 
 // main.h icerisinde tanimli yardimcilar (Security.cpp'nin bunlari gormesi icin)
 void sendServerCommand(char *szCommand);

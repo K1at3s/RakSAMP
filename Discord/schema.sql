@@ -44,4 +44,11 @@ CREATE TABLE IF NOT EXISTS group_colors (
     updated_at DATETIME NULL
 );
 
+-- Her botun XML'deki ismiyle (name) eşleştiği satır; botun verileri JSON data'da.
+CREATE TABLE IF NOT EXISTS bots (
+    name VARCHAR(64) PRIMARY KEY,      -- RakSAMPClient.xml <server nickname="...">
+    data TEXT NULL,                    -- JSON: botun anlık verileri
+    updated_at DATETIME NULL
+);
+
 -- ProxySQL için önerilen tek sorgu kuralı: tümü raksamp DB'sine yönlenir.

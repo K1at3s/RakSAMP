@@ -134,6 +134,9 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 			// Zone war: ?pl zaman asimi + GZ sonuc textdraw yakalama (bot GZ'ye girmez)
 			ProcessZoneWarAutoJoin();
 
+			// ?ztk zone sniper: hedef zonede savas bitince /gz (isine bekleme)
+			ProcessZtkTick();
+
 			// Cache + grup renklerini backend'e (MySQL) yazar (60 sn'de bir)
 			ProcessDbSync();
 
@@ -145,9 +148,6 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 			// Freeroam: /fr'yi sendServerCommand ile aralikli gonder (chat'e yansimaz)
 			ProcessFrRetry();
-
-			// ?zf grup tag haritasi: bilinmeyen grup tag'lerini /gstats ile sorgula
-			ProcessGroupHarvest();
 
 			// ?zf renk->grup taramasi: zgo mantigiyla /gzinfo (baglanti sonrasi oto, bir kez)
 			ProcessZoneScan();
@@ -337,12 +337,12 @@ void Log(char *fmt, ...)
 	if(settings.iPrintTimestamps && settings.iConsole)
 		printf("[%02d:%02d:%02d.%03d] ", time.wHour, time.wMinute, time.wSecond, time.wMilliseconds);
 
-	char buffer[512];
-	memset(buffer, 0, 512);
+	char buffer[2048];
+	memset(buffer, 0, 2048);
 
 	va_list args;
 	va_start(args, fmt);
-	vsprintf_s(buffer, 512, fmt, args);
+	vsprintf_s(buffer, 2048, fmt, args);
 	va_end(args);
 
 	fprintf(flLog, "%s", buffer);
