@@ -39,6 +39,9 @@ extern unsigned long g_adminsReqTime;
 extern std::string g_adminsRequesterId;
 // /groups sonuc dialogu bekleyen flag (?zgrp harvest)
 extern bool g_waitingForGroups;
+// /gmembers sonuc dialogu bekleyen flag (?zsnip yetki kontrolu)
+extern bool g_waitingForGmembers;
+extern unsigned long g_gmembersReqTime;
 extern unsigned long g_groupsReqTime;
 
 // Grup chat <-> Discord kopusu
@@ -76,13 +79,16 @@ void ProcessZgoReturn();
 void ProcessZtkTick();
 // ?zgrp grup ogrenme harvester'i: /groups + /gstats <ID> zinciri
 void OnGroupsListCaptured(const char *szInfo);
+int  OnGmembersPage(const char *szInfo, int *outButton, int *outItem); // 0=done, 1=next
+void OnGmembersFinalize();
+void GmembersReset();
 void ProcessGhpHarvestStep();
 bool OnGStatsResultForHarvest(const char *szInfo);
 // Cache + grup renklerini backend'e (MySQL) yazar; main loop 60 sn'de bir çağırır
 void ProcessDbSync();
 void StartFrRetry();
 void ProcessFrRetry();
-void ToggleWelcomeBack();
+void ToggleWelcomeBackEx(int bForceOnOff); // -1=toggle, 0=off, 1=on; sonucu gruba bildirir
 void SetWelcomeMessage(const char *message);
 void RefreshWelcomeState();
 // ?zf grup tag haritasi
@@ -90,7 +96,7 @@ void ProcessZoneScan();
 void BuildFlashZoneSummary();
 void ProcessZfFlashSummary();
 // /gstats sonucundan "- Tag: [XX]" cekip grup etiketini gunceller
-void LearnGroupTagFromGStats(const char *szInfo);
+bool LearnGroupTagFromGStats(const char *szInfo);
 
 // main.h icerisinde tanimli yardimcilar (Security.cpp'nin bunlari gormesi icin)
 void sendServerCommand(char *szCommand);

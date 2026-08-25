@@ -189,12 +189,24 @@ static double ExtractPacketLoss(const char *szText) {
     return -1.0;
 }
 
+// Buyuk/kucuk harf bagimsiz strstr: /stats diyaloğu "- FPS:\t\t194" buyuk harf
+// yazar; eski strstr("fps") bulamiyordu -> ?pl cevabi hep "FPS: 0" cikiyordu.
+static const char *StrStrI(const char *szHay, const char *szNeed) {
+    if (!szHay || !szNeed) return NULL;
+    size_t n = strlen(szNeed);
+    for (; *szHay; szHay++) {
+        if (_strnicmp(szHay, szNeed, n) == 0) return szHay;
+    }
+    return NULL;
+}
+
 // Genel sayi cikarma: metinde key'e yakin ilk sayiyi dondurur (yoksa -1.0).
 // Ornek: "FPS: 60" -> 60, "Ping 45 ms" -> 45. Once ileri, olmazsa geriye arar.
+// Key aramasi CASE-INSENSITIVE'tir (FPS/fps/Fps ayni sonuc).
 static double ExtractNumberNear(const char *szText, const char *key) {
     if (!szText || !key) return -1.0;
     int len = (int)strlen(szText);
-    const char *p = strstr(szText, key);
+    const char *p = StrStrI(szText, key);
     if (!p) return -1.0;
 
     const char *q = p - 30; if (q < szText) q = szText;
@@ -574,6 +586,47 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
             return 1;
         }
         // Farkli bir dialog geldi (ID giris vs.): bu /groups cevabi degil, beklemede kal
+    }
+
+    // -------------------------------------------------------------
+    // 3.6 /gmembers YAKALAMASI (?zsnip yetki kontrolu)
+    // Bot + komutu atan kullanici Co-Leader mi diye /gmembers listesini parse eder.
+    // -------------------------------------------------------------
+    if (g_waitingForGmembers) {
+        if (g_gmembersReqTime != 0 && GetTickCount() - g_gmembersReqTime > 30000) {
+            g_waitingForGmembers = false;
+            Log("[GHP] /gmembers bekleme zamanaşımı, flag sıfırlandı.");
+            return 0;
+        }
+        // UIF /gmembers cevabi LIST/TABLIST olabilir; bazi sunucularda MSGBOX.
+        // SAYFALI: her sayfa OnGmembersPage'e beslenir; GM_NEXT donerse istenen
+        // buton/item ile sonraki sayfa istenir (uye sayisina gore sayfa degisir).
+        if (sampDialog.bDialogStyle == DIALOG_STYLE_LIST ||
+            sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST ||
+            sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST_HEADERS ||
+            sampDialog.bDialogStyle == DIALOG_STYLE_MSGBOX) {
+            int iBtn = 0, iItem = -1;
+            int r = OnGmembersPage(szInfo, &iBtn, &iItem);
+            Log("[GHP] /gmembers sayfa yakalandi (style %d, baslik: %s) -> %s",
+                sampDialog.bDialogStyle, szTitle, (r == 1) ? "sonraki sayfa" : "finaliz");
+
+            RakNet::BitStream bsR;
+            bsR.Write((uint16_t)wDialogID);
+            if (r == 1) {
+                bsR.Write((uint8_t)iBtn);          // next-satiri sec (1) veya ikincil buton (0)
+                bsR.Write((uint16_t)(iItem >= 0 ? iItem : 0xFFFF));
+            } else {
+                bsR.Write((uint8_t)1);             // bitis: OK ile kapat
+                bsR.Write((uint16_t)0xFFFF);
+            }
+            bsR.Write((uint8_t)0);                 // Input Text Length
+            pRakClient->RPC(&RPC_DialogResponse, &bsR, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
+            if (r == 0)
+                OnGmembersFinalize();              // sonuc uygula (baslat/red)
+            // r==1: g_waitingForGmembers ACIK kalir, siradaki sayfa diyaloğu buraya gelir
+            return 1;
+        }
+        // Farkli bir dialog geldi: /gmembers cevabi degil, beklemede kal
     }
 
     // -------------------------------------------------------------
