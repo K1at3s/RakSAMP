@@ -924,41 +924,56 @@ app.post('/api/player/cache', async (req, res) => {
     }
 });
 
-// RakSAMP client'ı: grup renk haritasını DB'ye push eder.
-// Body: { colors: [{ color, tag, name }, ...] } — color üzerinden upsert.
-app.post('/api/group/colors', async (req, res) => {
-    const colors = (req.body || {}).colors;
-    if (!Array.isArray(colors)) return res.status(400).json({ success: false, message: "colors bekleniyor" });
-    // color PRIMARY key oldugu icin ayni renk birden fazla grup kaydinda gecerse
-    // ilki kazanir (sonraki duplicated atlanir). Tek istek icinde bile tekrar varsa
-    // dedup edip INSERT IGNORE'a ekstra guvence sagla (Duplicate entry hatasi olmasin).
+// RakSAMP client: ogrenilen grup adi + kisa tag + KALICI sahip olunan zone
+// id'leri tek satir (group_name üzerinden UPSERT). zones JSON = o grubun
+// sahip oldugu TUM zone'lar (flashing filtresi yok — kalici harita).
+// Client acilista GET /api/groups ile BUGUNKU kayitlari geri yükler;
+// boylece dunun verisi otomatik olur, zones.txt gibi dosya YOK.
+app.post('/api/groups', async (req, res) => {
+    const groups = (req.body || {}).groups;
+    if (!Array.isArray(groups)) return res.status(400).json({ success: false, message: "groups bekleniyor" });
     const seen = new Set();
     const rows = [];
-    for (const c of colors) {
-        if (!Number.isInteger(c.color) || c.color <= 0) continue;
-        const col = c.color >>> 0;
-        if (seen.has(col)) continue;
-        seen.add(col);
-        rows.push([col, String(c.tag || '').slice(0, 96), String(c.name || c.tag || '').slice(0, 96), new Date()]);
+    for (const g of groups) {
+        const name = String(g.name || '').trim().slice(0, 96);
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        const zones = Array.isArray(g.zones)
+            ? JSON.stringify(g.zones.map(Number).filter(n => Number.isInteger(n) && n >= 0 && n < 2048))
+            : '[]';
+        rows.push([name, String(g.tag || '').slice(0, 32), zones, new Date()]);
     }
     try {
-        // Renk haritası da sil-üstüne-yaz: eski grup kayıtları veride kalmaz.
-        // Bos liste de DELETE tetikler (client DB'yi sifirlamak icin bos push yapabilir).
-        await db.execute('DELETE FROM group_colors');
-        if (!rows.length) {
-            console.log('🎨 GROUP-COLORS: liste bos, DB temizlendi');
-            return res.json({ success: true, count: 0 });
-        }
-        // Ayni renk iki gruba ait olabiliyor (client tekillesitirir ama garanti olsun):
-        // IGNORE ile ilk kayit kazanir, PRIMARY (color) cakismasi hata vermez.
+        if (!rows.length) return res.json({ success: true, count: 0 });
         await db.query(
-            `INSERT IGNORE INTO group_colors (color, tag, name, updated_at) VALUES ?`,
+            `INSERT INTO gangs (group_name, tag, zones, updated_at) VALUES ?
+             ON DUPLICATE KEY UPDATE tag=VALUES(tag), zones=VALUES(zones), updated_at=VALUES(updated_at)`,
             [rows]
         );
-        console.log(`🎨 GROUP-COLORS: ${rows.length} renk DB'ye yazildi`);
+        console.log(`🏷️ GROUPS: ${rows.length} grup upsert edildi (kalici zone haritasiyla)`);
         return res.json({ success: true, count: rows.length });
     } catch (err) {
-        console.error('GROUP-COLORS hatasi:', err.message);
+        console.error('GROUPS hatasi:', err.message);
+        return res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// Client acilista BUGUNKU grup+tag+zone haritasini buradan geri yükler.
+// DATE(updated_at)=CURDATE() filtresi sayesinde dunun verisi otomatik elenir.
+app.get('/api/groups', async (req, res) => {
+    try {
+        // db.query() zaten dogrudan satir dizisini dondurur (tekrar destructure ETME).
+        const rows = await db.query(
+            'SELECT group_name, tag, zones FROM gangs WHERE DATE(updated_at) = CURDATE()'
+        );
+        const out = (Array.isArray(rows) ? rows : []).map(r => ({
+            name: r.group_name,
+            tag: r.tag || '',
+            zones: r.zones ? JSON.parse(r.zones) : []
+        }));
+        return res.json({ success: true, groups: out });
+    } catch (err) {
+        console.error('GROUPS-GET hatasi:', err.message);
         return res.status(500).json({ success: false, message: err.message });
     }
 });
@@ -973,13 +988,14 @@ app.post('/api/bot/status', async (req, res) => {
     const groupName = String(body.groupName || '').slice(0, 255);
     const zscan = body.zscan ? 1 : 0;
     const gzt = (body.gzt === undefined) ? 1 : (body.gzt ? 1 : 0);
+    const zgrp = (body.zgrp === undefined) ? 1 : (body.zgrp ? 1 : 0);
     try {
         await db.execute(
-            `INSERT INTO bots (name, group_name, zscan_enabled, gzt_enabled, data, updated_at) VALUES (?,?,?,?,?,?)
-             ON DUPLICATE KEY UPDATE group_name=VALUES(group_name), zscan_enabled=VALUES(zscan_enabled), gzt_enabled=VALUES(gzt_enabled), data=VALUES(data), updated_at=VALUES(updated_at)`,
-            [name, groupName, zscan, gzt, data, new Date()]
+            `INSERT INTO bots (name, group_name, zscan_enabled, gzt_enabled, zgrp_enabled, data, updated_at) VALUES (?,?,?,?,?,?,?)
+             ON DUPLICATE KEY UPDATE group_name=VALUES(group_name), zscan_enabled=VALUES(zscan_enabled), gzt_enabled=VALUES(gzt_enabled), zgrp_enabled=VALUES(zgrp_enabled), data=VALUES(data), updated_at=VALUES(updated_at)`,
+            [name, groupName, zscan, gzt, zgrp, data, new Date()]
         );
-        console.log(`🤖 BOT-STATUS: '${name}' DB'ye yazildi (zscan=${zscan}, gzt=${gzt})`);
+        console.log(`🤖 BOT-STATUS: '${name}' DB'ye yazildi (zscan=${zscan}, gzt=${gzt}, zgrp=${zgrp})`);
         return res.json({ success: true });
     } catch (err) {
         console.error('BOT-STATUS hatasi:', err.message);
@@ -987,18 +1003,21 @@ app.post('/api/bot/status', async (req, res) => {
     }
 });
 
-// ?zscan / ?gzt on/off tercihlerini gruba gore oku: client acilisinda grubunun durumunu ceker.
+// ?zscan / ?gzt / ?zgrp on/off tercihlerini gruba gore oku: client acilisinda
+// grubunun durumunu ceker.
 app.get('/api/bot/toggles', async (req, res) => {
     const group = String(req.query.group || '').slice(0, 255);
-    if (!group) return res.json({ success: false, zscan: 0, gzt: 1, message: "group bekleniyor" });
+    if (!group) return res.json({ success: false, zscan: 0, gzt: 1, zgrp: 1, message: "group bekleniyor" });
     try {
-        const rows = await db.execute('SELECT zscan_enabled, gzt_enabled FROM bots WHERE group_name=? ORDER BY updated_at DESC LIMIT 1', [group]);
-        const zscan = (rows && rows[0] && rows[0].zscan_enabled) ? 1 : 0;
-        const gzt = (rows && rows[0] && rows[0].gzt_enabled === undefined) ? 1 : (rows[0].gzt_enabled ? 1 : 0);
-        return res.json({ success: true, zscan, gzt });
+        const rows = await db.execute('SELECT zscan_enabled, gzt_enabled, zgrp_enabled FROM bots WHERE group_name=? ORDER BY updated_at DESC LIMIT 1', [group]);
+        const r = (rows && rows[0]) || {};
+        const zscan = r.zscan_enabled ? 1 : 0;
+        const gzt = (r.gzt_enabled === undefined) ? 1 : (r.gzt_enabled ? 1 : 0);
+        const zgrp = (r.zgrp_enabled === undefined) ? 1 : (r.zgrp_enabled ? 1 : 0);
+        return res.json({ success: true, zscan, gzt, zgrp });
     } catch (err) {
         console.error('BOT-TOGGLES hatasi:', err.message);
-        return res.status(500).json({ success: false, zscan: 0, gzt: 1, message: err.message });
+        return res.status(500).json({ success: false, zscan: 0, gzt: 1, zgrp: 1, message: err.message });
     }
 });
 

@@ -10,6 +10,7 @@ function esc(s) { return String(s).replace(/[\\%']/g, '\\$&'); }
 
 // def = { table, pkey, fields: { prop: {col, type:'text'|'int'|'json', pk?:bool, def?} } }
 function makeModel(table, def) {
+    def.table = table; // init() CREATE TABLE icin; eksikti -> "undefined" tablosu olusuyordu
     registry[table] = def;
 
     const setSql = def.fields;
@@ -153,27 +154,33 @@ async function init() {
         ping INT NULL,
         updated_at DATETIME NULL
     )`);
-    await p.execute(`CREATE TABLE IF NOT EXISTS group_colors (
-        color INT UNSIGNED PRIMARY KEY,
-        tag VARCHAR(96) NULL,
-        name VARCHAR(96) NULL,
+    // Kalici zone->sahip haritasi gangs.tablosundaki zones JSON alanindadir
+    // (gruba gore TEK satir). Ayri zones tablosu YOK — tek dogru kaynak gangs.
+    // Ogrenilen grup adi + kisa tag haritasi (gruba gore TEK satir; zone kaydi yok).
+    // 'groups' MySQL reserved word oldugu icin tablo adi 'gangs'.
+    await p.execute(`CREATE TABLE IF NOT EXISTS gangs (
+        group_name VARCHAR(96) PRIMARY KEY,
+        tag VARCHAR(32) NULL,
+        zones TEXT NULL,
         updated_at DATETIME NULL
     )`);
+    await p.execute(`ALTER TABLE gangs ADD COLUMN zones TEXT NULL`).catch(() => {});
     // Her botun XML'deki ismiyle (name) eslestigi satir; botun verileri JSON data'da.
-    // zscan_enabled + group_name: ?zscan on/off tercihi botun oyun ici grubuna gore saklanir.
+    // zscan_enabled + zgrp_enabled + group_name: ?zscan / ?zgrp on/off tercihi botun
+    // oyun ici grubuna gore saklanir.
     await p.execute(`CREATE TABLE IF NOT EXISTS bots (
         name VARCHAR(64) PRIMARY KEY,
         group_name VARCHAR(255) NULL,
         zscan_enabled TINYINT NOT NULL DEFAULT 0,
         gzt_enabled TINYINT NOT NULL DEFAULT 1,
+        zgrp_enabled TINYINT NOT NULL DEFAULT 1,
         data TEXT NULL,
         updated_at DATETIME NULL
     )`);
     await p.execute(`ALTER TABLE bots ADD COLUMN group_name VARCHAR(255) NULL`).catch(() => {});
     await p.execute(`ALTER TABLE bots ADD COLUMN zscan_enabled TINYINT NOT NULL DEFAULT 0`).catch(() => {});
     await p.execute(`ALTER TABLE bots ADD COLUMN gzt_enabled TINYINT NOT NULL DEFAULT 1`).catch(() => {});
-    // Eski tablolarda name kolonu yoksa ekle (ALTER, mevcut veriyi korur)
-    await p.execute(`ALTER TABLE group_colors ADD COLUMN name VARCHAR(96) NULL`).catch(() => {});
+    await p.execute(`ALTER TABLE bots ADD COLUMN zgrp_enabled TINYINT NOT NULL DEFAULT 1`).catch(() => {});
     // Index seçici ekleme yok
     // Admin loglari: oyun ici "ADMIN: X banned/muted/kicked/disarmed Y(id) ..." yakalamasi
     await p.execute(`CREATE TABLE IF NOT EXISTS admin_logs (

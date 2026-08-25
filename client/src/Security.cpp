@@ -422,8 +422,10 @@ void SendWelcomeBack(const char *playerName) {
     }
 }
 
-// 11a. ?greet — welcome back bildirimlerini aç/kapat (MongoDB'de saklanır)
-void ToggleWelcomeBack() {
+// 11a. ?greet — welcome back bildirimlerini aç/kapat (DB'de saklanir).
+// bForceOnOff: -1 = toggle, 0 = off'a zorla, 1 = on'a zorla.
+// Sonuc GRUPTA duyurulur (kullanici: "acik mi kapali mi diye mesaj atmiyor").
+void ToggleWelcomeBackEx(int bForceOnOff) {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
 
     httplib::Client cli(g_backendBase);
@@ -432,15 +434,36 @@ void ToggleWelcomeBack() {
     json body = { {"hwid", g_myHWID} };
 
     auto res = cli.Post("/api/welcome/toggle", body.dump(), "application/json");
+    bool enabled = false;
+    bool bOk = false;
     if (res && res->status == 200) {
         try {
             auto data = json::parse(res->body);
-            bool enabled = data.value("enabled", true);
-            std::cout << (enabled ? "👋 [WELCOME] Welcome back mesajlari AÇILDI\n" : "👋 [WELCOME] Welcome back mesajlari KAPANDI\n");
+            enabled = data.value("enabled", true);
+            bOk = true;
         } catch (...) {}
-    } else {
-        std::cout << "⚠️ [WELCOME] Durum degistirilemedi (HTTP " << (res ? res->status : -1) << ")\n";
     }
+
+    // on/off ile acildiysa ve sonuc istenen degilse bir kez daha cevir
+    if (bOk && bForceOnOff >= 0 && (enabled ? 1 : 0) != bForceOnOff) {
+        auto res2 = cli.Post("/api/welcome/toggle", body.dump(), "application/json");
+        if (res2 && res2->status == 200) {
+            try {
+                auto data2 = json::parse(res2->body);
+                enabled = data2.value("enabled", !enabled);
+            } catch (...) {}
+        }
+    }
+
+    char szMsg[96];
+    if (bOk)
+        sprintf_s(szMsg, sizeof(szMsg), g_langTurkish ? "!Welcome mesajlari: %s." : "!Welcome messages: %s.",
+            enabled ? (g_langTurkish ? "ACIK" : "ON") : (g_langTurkish ? "KAPALI" : "OFF"));
+    else
+        sprintf_s(szMsg, sizeof(szMsg), g_langTurkish ? "!Welcome mesajlari degistirilemedi." : "!Could not change welcome messages.");
+    sendChat(szMsg);
+    std::cout << (bOk ? (enabled ? "👋 [WELCOME] Welcome back ACIK\n" : "👋 [WELCOME] Welcome back KAPALI\n")
+                      : "⚠️ [WELCOME] Durum degistirilemedi\n");
 }
 
 // 11b. ?welcomemsg <mesaj> — kişiye özel welcome mesajı ayarla (MongoDB'de saklanır)

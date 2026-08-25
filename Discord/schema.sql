@@ -37,17 +37,20 @@ CREATE TABLE IF NOT EXISTS players (
     updated_at DATETIME NULL
 );
 
--- RakSAMP client'ından push edilen grup renkleri (zone etiketi için)
-CREATE TABLE IF NOT EXISTS group_colors (
-    color INT UNSIGNED PRIMARY KEY,    -- 0xRRGGBBAA olarak saklanan RGBA
-    tag VARCHAR(96) NULL,
-    updated_at DATETIME NULL
-);
-
 -- Her botun XML'deki ismiyle (name) eşleştiği satır; botun verileri JSON data'da.
 CREATE TABLE IF NOT EXISTS bots (
     name VARCHAR(64) PRIMARY KEY,      -- RakSAMPClient.xml <server nickname="...">
     data TEXT NULL,                    -- JSON: botun anlık verileri
+    updated_at DATETIME NULL
+);
+
+-- Client'ın öğrendiği grup adı + kısa tag (gruba göre TEK satır; zone kaydı yok).
+-- zones: JSON dizi — grubun sahip olduğu TÜM zone id'leri (1 satırda birden fazla).
+-- 'groups' MySQL reserved word olduğu için tablo adı 'gangs'.
+CREATE TABLE IF NOT EXISTS gangs (
+    group_name VARCHAR(96) PRIMARY KEY,
+    tag VARCHAR(32) NULL,
+    zones TEXT NULL,
     updated_at DATETIME NULL
 );
 
