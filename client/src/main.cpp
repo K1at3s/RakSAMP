@@ -1,4 +1,4 @@
-/*
+﻿/*
 	Updated to 0.3.7 by P3ti
 */
 
@@ -21,11 +21,15 @@ DWORD dwAutoRunTick = GetTickCount();
 
 extern int iMoney, iDrunkLevel, iLocalPlayerSkin;
 extern BOOL bIsSpectating;
+// netrpc.cpp: UIF Login dialogu acik mi? Acikken spawn istegi gonderilmez
+// (yoksa sunucu tmp hesap spawn eder, gercek hesap kaybedilir).
+extern bool g_loginPending;
+extern unsigned long g_loginPendingUntil;
 
 int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
 	// Local testte: "http://127.0.0.1:3000"
-	// VDS canlıda: "http://144.48.83.9:3000"
+	// VDS canlida: "http://144.48.83.9:3000"
 	if (!PerformSecurityHandshake("http://127.0.0.1:3000")) {
 		return 0;
 	}
@@ -131,6 +135,29 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 		if (iAreWeConnected && iGameInited)
 		{
+			// UIF LOGIN BEKLEMESI: kullanici sifreyle hesabina girene kadar bot
+			// aksiyonlari (war, ztk, db sync, fr, tarama, discord chat) BASLAMAZ.
+			// Sadece chat kuyrugu ve dialog yakalama ("You logged in" algilama) calisir.
+			// (g_loginPending: InitGame'de true; login dialogu gelirse SAMPRPC korur;
+			//  "You logged in to your account" mesaji gelince false olur.)
+			if(g_loginPending)
+			{
+				// Timeout: login dialogu hic gelmezse 10 sn sonra otomatik devam et.
+				// (g_loginPendingUntil: InitGame'de now+10s; login dialogu gelirse
+				// SAMPRPC 0 yapar = kullanici girene kadar bekle, timeout yok.)
+				if(g_loginPendingUntil != 0 && GetTickCount() > g_loginPendingUntil)
+				{
+					g_loginPending = false;
+					Log("[LOGIN] Login bekleme timeout (10 sn), normal akisa devam ediliyor.");
+				}
+				else
+				{
+					ProcessChatOutQueue();
+					PollDiscordChat();
+					continue;
+				}
+			}
+
 			// Zone war: ?pl zaman asimi + GZ sonuc textdraw yakalama (bot GZ'ye girmez)
 			ProcessZoneWarAutoJoin();
 
@@ -161,7 +188,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 			// Discord -> Oyun komut kuyrugu (/send, /gstats): oyunda calistir
 			PollCommands();
 
-			// Welcome ayarlarini backend'den tazele (kişisel mesaj, 10 sn'de bir)
+			// Welcome ayarlarini backend'den tazele (kisisel mesaj, 10 sn'de bir)
 			RefreshWelcomeState();
 
 			static DWORD dwLastInfoUpdate = GetTickCount();
@@ -232,11 +259,24 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 				}
 				else
 				{
-					sampRequestClass(settings.iClassID);
-					sampSpawn();
+					// UIF Login dialogu acikken spawn GONDERME: sunucu tmp hesap
+					// spawn ederdi. Login (kullanici sifreyle girdi) bitene kadar beklenir.
+					if(g_loginPending)
+					{
+						if(!iNotificationDisplayedBeforeSpawn)
+						{
+							Log("[LOGIN] Login bekleniyor, spawn ertelendi (tmp hesap onleniyor).");
+							iNotificationDisplayedBeforeSpawn = 1;
+						}
+					}
+					else
+					{
+						sampRequestClass(settings.iClassID);
+						sampSpawn();
 
-					iSpawned = 1;
-					iNotificationDisplayedBeforeSpawn = 1;
+						iSpawned = 1;
+						iNotificationDisplayedBeforeSpawn = 1;
+					}
 				}
 			}
 			else

@@ -1,11 +1,11 @@
-const fs = require('fs');
+﻿const fs = require('fs');
 const path = require('path');
 const { Collection } = require('discord.js');
 
 const commands = new Collection();
 const commandsDir = path.join(__dirname, '..', 'commands');
 
-// commands/ klasöründeki tüm komutları yükle
+// commands/ klasorundeki tum komutlari yukle
 function loadCommands() {
     commands.clear();
     const files = fs.readdirSync(commandsDir).filter(f => f.endsWith('.js'));
@@ -15,11 +15,11 @@ function loadCommands() {
             commands.set(cmd.data.name, cmd);
         }
     }
-    console.log(`✅ ${commands.size} komut yüklendi.`);
+    console.log(`✅ ${commands.size} komut yuklendi.`);
     return commands;
 }
 
-// Slash komutları botun bulunduğu her sunucuya kaydet (anında görünür)
+// Slash komutlari botun bulundugu her sunucuya kaydet (aninda gorunur)
 async function registerCommands(client) {
     const data = commands.map(c => c.data.toJSON());
     for (const guild of client.guilds.cache.values()) {
@@ -41,8 +41,8 @@ async function handleInteraction(interaction) {
     try {
         await cmd.execute(interaction);
     } catch (e) {
-        console.error(`Komut hatası (${interaction.commandName}):`, e);
-        const msg = { content: '❌ Komut çalıştırılırken hata oluştu.', ephemeral: true };
+        console.error(`Komut hatasi (${interaction.commandName}):`, e);
+        const msg = { content: '❌ Komut calistirilirken hata olustu.', ephemeral: true };
         if (interaction.replied || interaction.deferred) {
             await interaction.followUp(msg).catch(() => {});
         } else {

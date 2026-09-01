@@ -1,12 +1,12 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+﻿const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const Guild = require('../models/Guild');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('unlink')
-        .setDescription('Bir HWID bağlantısını kaldırır')
+        .setDescription('Bir HWID baglantisini kaldirir')
         .addStringOption(o => o.setName('hwid')
-            .setDescription('Kaldırılacak HWID kodu')
+            .setDescription('Kaldirilacak HWID kodu')
             .setRequired(true))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     async execute(interaction) {
@@ -19,8 +19,8 @@ module.exports = {
         );
 
         await interaction.reply(
-            `✅ **\`${hwid}\`** bağlantısı kaldırıldı.\n` +
-            `Bağlı HWID\'ler: ${guild.linkedHwids.map(h => `\`${h}\``).join(', ') || 'yok'}`
+            `✅ **\`${hwid}\`** baglantisi kaldirildi.\n` +
+            `Bagli HWID\'ler: ${guild.linkedHwids.map(h => `\`${h}\``).join(', ') || 'yok'}`
         );
     }
 };

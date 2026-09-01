@@ -1,11 +1,11 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+﻿const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const db = require('../db');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('alog')
-        .setDescription('Oyuncunun admin log geçmişini gösterir (ban/mute/kick, mod, sebep)')
-        .addStringOption(o => o.setName('oyuncu').setDescription('Oyuncu adı veya ID').setRequired(true)),
+        .setDescription('Oyuncunun admin log gecmisini gosterir (ban/mute/kick, mod, sebep)')
+        .addStringOption(o => o.setName('oyuncu').setDescription('Oyuncu adi veya ID').setRequired(true)),
     async execute(interaction) {
         const q = interaction.options.getString('oyuncu').trim();
         await interaction.deferReply({ ephemeral: true });
@@ -32,7 +32,7 @@ module.exports = {
         }
 
         if (!rows || rows.length === 0) {
-            return interaction.editReply({ content: `❌ Kayıt yok: **${q}**` });
+            return interaction.editReply({ content: `❌ Kayit yok: **${q}**` });
         }
 
         const lines = rows.map(r => {
@@ -46,7 +46,7 @@ module.exports = {
 
         const embed = new EmbedBuilder()
             .setTitle(`📋 Admin Log — ${rows[0].target_name}${rows[0].target_id ? ` (${rows[0].target_id})` : ''}`)
-            .setDescription(`Son **${rows.length}** kayıt:\n\n${lines}`)
+            .setDescription(`Son **${rows.length}** kayit:\n\n${lines}`)
             .setColor(0xFF5555)
             .setTimestamp();
 

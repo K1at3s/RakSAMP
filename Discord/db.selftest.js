@@ -1,14 +1,14 @@
-// db.js köprüsünün gerçek SQL/operator mantığını MySQL'siz doğrular.
-// mysql2/promise'i in-memory bir fake ile değiştirir; üretilen SQL şekillerini işler.
-// Gerçek ProxySQL/MySQL bağlantısı kurulunca: DB=mysql ile manual doğrula.
+﻿// db.js koprusunun gercek SQL/operator mantigini MySQL'siz dogrular.
+// mysql2/promise'i in-memory bir fake ile degistirir; uretilen SQL sekillerini isler.
+// Gercek ProxySQL/MySQL baglantisi kurulunca: DB=mysql ile manual dogrula.
 const path = require('node:path');
 
-// --- fake mysql2/promise (yalnızca db.js'in ürettiği 4 SQL şekli) ---
+// --- fake mysql2/promise (yalnizca db.js'in urettigi 4 SQL sekli) ---
 const state = {}; // { table: [ {col: val}, ... ] }
 const fakeMysql2 = {
     createPool: () => ({
         async execute(sql, vals = []) {
-            if (/^CREATE TABLE/.test(sql)) return [{ warnings: 0 }]; // şema bootstrap'ı no-op
+            if (/^CREATE TABLE/.test(sql)) return [{ warnings: 0 }]; // sema bootstrap'i no-op
             if (/^SELECT \* FROM (\w+)/.test(sql)) {
                 const t = /^SELECT \* FROM (\w+)/.exec(sql)[1];
                 const conds = /WHERE (.+) LIMIT 1/.exec(sql)[1].split(' AND ');
@@ -63,7 +63,7 @@ const assert = require('node:assert');
 const { model, init } = require('./db');
 
 (async () => {
-    await init(); // şema bootstrap'ı da fake üzerinde çalışır (CREATE TABLE IF NOT EXISTS)
+    await init(); // sema bootstrap'i da fake uzerinde calisir (CREATE TABLE IF NOT EXISTS)
     const Guild = model('guilds_test2', {
         pkey: 'guildId',
         fields: {
@@ -80,7 +80,7 @@ const { model, init } = require('./db');
     assert.deepStrictEqual(doc.linkedHwids, []);
     assert.strictEqual(doc.lang, 'en');
     assert.strictEqual(doc.createdAt, 'NOW');
-    assert.ok(!doc.groupChatEnabled); // defaults yolu: ham 0 (truthiness app'te kullanılır)
+    assert.ok(!doc.groupChatEnabled); // defaults yolu: ham 0 (truthiness app'te kullanilir)
 
     // $addToSet (link.js) — dedup
     const a = await Guild.findOneAndUpdate({ guildId: 'g1' }, { $addToSet: { linkedHwids: 'HWID-A' } }, {});
@@ -109,6 +109,6 @@ const { model, init } = require('./db');
     await e.save();
     assert.strictEqual((await Guild.findOne({ guildId: 'g2' })).lang, 'tr');
 
-    console.log('db.js shim: OK — create/findOne/findOneAndUpdate($set,$addToSet,$pull)/save/upsert/JSON sorgu doğru.');
+    console.log('db.js shim: OK — create/findOne/findOneAndUpdate($set,$addToSet,$pull)/save/upsert/JSON sorgu dogru.');
     process.exit(0);
 })().catch(e => { console.error('FAIL:', e.stack); process.exit(1); });

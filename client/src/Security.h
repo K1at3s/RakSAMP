@@ -1,9 +1,10 @@
-#ifndef SECURITY_H
+﻿#ifndef SECURITY_H
 #define SECURITY_H
 
 #include <string>
+#include <vector>
 
-// Küresel Değişkenler
+// K├╝resel De─si┼skenler
 extern std::string g_myHWID;
 extern std::string g_sessionToken;
 extern std::string g_commandPrefix;
@@ -33,7 +34,7 @@ void LoadPlayerCache();
 extern bool g_waitingForGst;
 extern unsigned long g_gstReqTime;
 extern char g_szNickName[32];
-// /admins köprüsü (Discord /admins slash komutu)
+// /admins k├pr├╝s├╝ (Discord /admins slash komutu)
 extern bool g_waitingForAdmins;
 extern unsigned long g_adminsReqTime;
 extern std::string g_adminsRequesterId;
@@ -49,6 +50,7 @@ extern bool g_groupChatEnabled;
 extern int g_bridgeSuppressEcho;
 // Welcome back ayarlari (MongoDB ile senkron)
 extern std::string g_welcomeMessage;
+extern bool g_welcomeEnabled;
 // Bot mesaj dili: false=English (varsayilan), true=Turkce. MongoDB'de (Guild.lang) saklanir,
 // polling ile senkron; ?tr/?en oyunda degistirir.
 extern bool g_langTurkish;
@@ -79,22 +81,61 @@ void ProcessZgoReturn();
 void ProcessZtkTick();
 // ?zgrp grup ogrenme harvester'i: /groups + /gstats <ID> zinciri
 void OnGroupsListCaptured(const char *szInfo);
+void LearnOwnGroupName(const char *szName);
+extern bool g_waitingForGroupName;
+extern int  g_groupNamePhase;
+extern unsigned long g_groupNameReqTime;
 int  OnGmembersPage(const char *szInfo, int *outButton, int *outItem); // 0=done, 1=next
 void OnGmembersFinalize();
 void GmembersReset();
 void ProcessGhpHarvestStep();
 bool OnGStatsResultForHarvest(const char *szInfo);
-// Cache + grup renklerini backend'e (MySQL) yazar; main loop 60 sn'de bir çağırır
+// Cache + grup renklerini backend'e (MySQL) yazar; main loop 60 sn'de bir ├ga─s─▒r─▒r
 void ProcessDbSync();
 void StartFrRetry();
 void ProcessFrRetry();
 void ToggleWelcomeBackEx(int bForceOnOff); // -1=toggle, 0=off, 1=on; sonucu gruba bildirir
 void SetWelcomeMessage(const char *message);
+void SetWelcomePerUser(const char *target, const char *message);
+std::string GetWelcomePerUser(const char *target);
 void RefreshWelcomeState();
 // ?zf grup tag haritasi
 void ProcessZoneScan();
 void BuildFlashZoneSummary();
 void ProcessZfFlashSummary();
+// /grole / /grank paginated otomasyonu (Discord -> /grole listesinde ara + rol sec)
+extern bool g_groleActive;
+extern std::string g_groleTarget;
+extern std::string g_groleRole;
+extern int  g_grolePhase;
+extern unsigned long g_groleStartTime;
+extern int  g_grolePage;
+extern bool g_grankActive;
+extern std::string g_grankTarget;
+extern std::string g_grankRank;
+extern int  g_grankPhase;
+extern unsigned long g_grankStartTime;
+extern int  g_grankPage;
+void StartGrole(const char *target, const char *role);
+void StartGrank(const char *target, const char *rank);
+extern bool g_groleListActive;
+extern std::string g_groleListRequesterId;
+extern std::string g_groleListGuildId;
+extern std::string g_groleListHwid;
+extern std::vector<std::string> g_groleListMembers;
+extern int g_groleListPage;
+extern unsigned long g_groleListStartTime;
+void StartGroleList(const char *requesterId, const char *guildId, const char *hwid);
+void FinishGroleListAndPost();
+extern bool g_grankListActive;
+extern std::string g_grankListRequesterId;
+extern std::string g_grankListGuildId;
+extern std::string g_grankListHwid;
+extern std::vector<std::string> g_grankListMembers;
+extern int g_grankListPage;
+extern unsigned long g_grankListStartTime;
+void StartGrankList(const char *requesterId, const char *guildId, const char *hwid);
+void FinishGrankListAndPost();
 // /gstats sonucundan "- Tag: [XX]" cekip grup etiketini gunceller
 bool LearnGroupTagFromGStats(const char *szInfo);
 
@@ -102,7 +143,7 @@ bool LearnGroupTagFromGStats(const char *szInfo);
 void sendServerCommand(char *szCommand);
 int RunCommand(char *szCMD, int iFromConsole);
 
-// misc_funcs.cpp: cikis chat kuyrugu (5 sn arayla gonderim) — main loop her tick cagirir
+// misc_funcs.cpp: cikis chat kuyrugu (5 sn arayla gonderim) - main loop her tick cagirir
 void ProcessChatOutQueue();
 
 #endif

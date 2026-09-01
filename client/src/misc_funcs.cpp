@@ -1,4 +1,4 @@
-/*
+﻿/*
 	Updated to 0.3.7 by P3ti
 */
 
@@ -348,7 +348,7 @@ void sendServerCommand(char *szCommand)
 }
 
 // --- Cikis chat kuyrugu: botun attigi TUM mesajlar 5 sn arayla gider (flood yok).
-#define CHAT_OUT_INTERVAL_MS 5000
+#define CHAT_OUT_INTERVAL_MS 1000
 #define CHAT_OUT_QUEUE_MAX 16
 static char g_chatOutQueue[CHAT_OUT_QUEUE_MAX][300];
 static int g_chatOutCount = 0;

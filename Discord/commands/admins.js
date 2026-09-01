@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+﻿const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models/Guild');
 const { queueCommand } = require('../utils/commandOutbox');
 const { setPendingInteraction } = require('../utils/pendingReplies');
@@ -6,13 +6,13 @@ const { setPendingInteraction } = require('../utils/pendingReplies');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('admins')
-        .setDescription('Bağlı RakSAMP istemcisinden online admin listesini ister'),
+        .setDescription('Bagli RakSAMP istemcisinden online admin listesini ister'),
     async execute(interaction) {
         const guild = await Guild.findOne({ guildId: interaction.guildId });
 
         if (!guild || !guild.linkedHwids || guild.linkedHwids.length === 0) {
             return interaction.reply({
-                content: '❌ Bu sunucu henüz bir RakSAMP istemcisine bağlı değil. Önce `/link <hwid>` kullanın.',
+                content: '❌ Bu sunucu henuz bir RakSAMP istemcisine bagli degil. Once `/link <hwid>` kullanin.',
                 ephemeral: true
             });
         }
@@ -25,6 +25,6 @@ module.exports = {
         const cmd = '/admins';
         queueCommand(hwid, { type: 'admins', cmd, requesterId: interaction.id });
 
-        console.log(`🛡️ [ADMINS] Komut kuyruğa alındı (requester=${interaction.id})`);
+        console.log(`🛡️ [ADMINS] Komut kuyruga alindi (requester=${interaction.id})`);
     }
 };

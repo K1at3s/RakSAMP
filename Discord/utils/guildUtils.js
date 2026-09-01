@@ -1,6 +1,6 @@
-const Guild = require('../models/Guild');
+﻿const Guild = require('../models/Guild');
 
-// Sunucu kaydını getir, yoksa varsayılan değerlerle oluştur
+// Sunucu kaydini getir, yoksa varsayilan degerlerle olustur
 async function getGuild(guildId) {
     if (!guildId) return null;
     let guild = await Guild.findOne({ guildId });
@@ -10,13 +10,13 @@ async function getGuild(guildId) {
     return guild;
 }
 
-// HWID ile bağlı olduğu sunucuyu bul
+// HWID ile bagli oldugu sunucuyu bul
 async function getGuildByHwid(hwid) {
     if (!hwid) return null;
     return await Guild.findOne({ linkedHwids: hwid });
 }
 
-// Kanal ID'sini veritabanından çek, ayarlanmamışsa null
+// Kanal ID'sini veritabanindan cek, ayarlanmamissa null
 async function getChannelId(guildId, type) {
     const guild = await getGuild(guildId);
     if (!guild) return null;

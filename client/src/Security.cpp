@@ -1,4 +1,4 @@
-#include "Security.h"
+﻿#include "Security.h"
 #include <windows.h>
 #include <intrin.h>
 #include <iostream>
@@ -10,6 +10,7 @@
 
 // misc_funcs.cpp icerisinde tanimli (main.h bagimliligini onlemek icin local decl)
 void sendChat(char *szMessage);
+void Log(char *fmt, ...);
 
 using json = nlohmann::json;
 
@@ -31,7 +32,7 @@ bool g_gstatsAutoSubmit = true;
 bool g_gstatsSentFirst = false;
 // Discord slash komutundan gelen requesterId: sonuc o kullaniciya reply olarak gonderilir
 std::string g_gstatsRequesterId = "";
-// Komut parametresi (/gstats 5, /stats 5, /astats 5 gibi) — ID dialogu submit'inde kullanilir
+// Komut parametresi (/gstats 5, /stats 5, /astats 5 gibi) - ID dialogu submit'inde kullanilir
 std::string g_gstatsInput = "";
 bool g_waitingForPNetStats = false;
 unsigned long g_pnetstatsReqTime = 0;
@@ -48,6 +49,7 @@ std::string g_adminsRequesterId = "";
 bool g_groupChatEnabled = false;
 int g_bridgeSuppressEcho = 0;
 std::string g_welcomeMessage = "";
+bool g_welcomeEnabled = true;   // ?greet acik/kapali (backend welcome_enabled kopyasi)
 // Bot mesaj dili: false=English (varsayilan), true=Turkce. Mongo'dan (Guild.lang) gelir.
 bool g_langTurkish = false;
 
@@ -67,7 +69,7 @@ void CopyToClipboard(const std::string& text) {
     }
 }
 
-// 2. HWID Üretimi (CPU ID + Vol Serial)
+// 2. HWID ├£retimi (CPU ID + Vol Serial)
 std::string GenerateSecureHWID() {
     int cpuinfo[4] = { 0 };
     __cpuid(cpuinfo, 0);
@@ -110,7 +112,7 @@ bool PerformSecurityHandshake(const std::string& serverUrl) {
                 g_isEngineActive = true;
 
                 std::cout << "-------------------------------------------\n";
-                std::cout << "✅ [LISANS ONAYLANDI] Sunucuya baglaniliyor...\n";
+                std::cout << "-£à [LISANS ONAYLANDI] Sunucuya baglaniliyor...\n";
                 std::cout << "-------------------------------------------\n";
                 return true;
             }
@@ -119,19 +121,19 @@ bool PerformSecurityHandshake(const std::string& serverUrl) {
     }
 
     std::cout << "-------------------------------------------\n";
-    std::cout << "❌ [LISANSSIZ CIHAZ] Erisim Yetkiniz Yok!\n";
+    std::cout << "-Øî [LISANSSIZ CIHAZ] Erisim Yetkiniz Yok!\n";
     CopyToClipboard(g_myHWID);
-    std::cout << "📋 HWID Pano'ya Kopyalandi: " << g_myHWID << "\n";
-    std::cout << "💬 Discord uzerinden yoneticiye bu kodu iletin.\n";
+    std::cout << "­sôï HWID Pano'ya Kopyalandi: " << g_myHWID << "\n";
+    std::cout << "­sÆ¼ Discord uzerinden yoneticiye bu kodu iletin.\n";
     std::cout << "-------------------------------------------\n";
 
     // Backend ayakta degilse (Discord botu kapali) kullaniciya belirgin uyari goster
     if (!res || res->status != 200) {
         MessageBoxA(NULL,
-            "Discord botu kapalı olduğu için RakSAMP açılamıyor.\n\n"
-            "Lütfen Discord botunun (backend sunucusunun) çalıştığından emin olun ve tekrar deneyin.\n\n"
-            "HWID pano'ya kopyalandı.",
-            "RakSAMP - Bağlantı Hatası",
+            "Discord botu kapal─▒ oldu─su i├gin RakSAMP a├g─▒lam─▒yor.\n\n"
+            "L├╝tfen Discord botunun (backend sunucusunun) ├gal─▒┼st─▒─s─▒ndan emin olun ve tekrar deneyin.\n\n"
+            "HWID pano'ya kopyaland─▒.",
+            "RakSAMP - Ba─slant─▒ Hatas─▒",
             MB_OK | MB_ICONERROR);
     }
 
@@ -140,7 +142,7 @@ bool PerformSecurityHandshake(const std::string& serverUrl) {
     return false;
 }
 
-// 4. Oyun içi ?w (War Help) — Discord'a @everyone ile yardım çağrısı gönder
+// 4. Oyun i├gi ?w (War Help) - Discord'a @everyone ile yard─▒m ├ga─sr─▒s─▒ g├nder
 void TriggerWarHelp(const char *playerName) {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
 
@@ -156,13 +158,13 @@ void TriggerWarHelp(const char *playerName) {
 
     auto res = cli.Post("/api/warhelp", body.dump(), "application/json");
     if (res && res->status == 200) {
-        std::cout << "⚔️ [WARHELP] Discord'a yardim cagrisi gonderildi!\n";
+        std::cout << "-Uo´©Å [WARHELP] Discord'a yardim cagrisi gonderildi!\n";
     } else {
-        std::cout << "⚠️ [WARHELP] Discord'a gonderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
+        std::cout << "-Uá´©Å [WARHELP] Discord'a gonderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
     }
 }
 
-// 5. Oyun içi ?discordchat — MongoDB'deki köprü durumunu aç/kapat
+// 5. Oyun i├gi ?discordchat - MongoDB'deki k├pr├╝ durumunu a├g/kapat
 void ToggleDiscordChat() {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
 
@@ -177,18 +179,18 @@ void ToggleDiscordChat() {
             auto data = json::parse(res->body);
             g_groupChatEnabled = data.value("enabled", false);
             if (g_groupChatEnabled) {
-                std::cout << "💬 [GROUPCHAT] Discord grup chat köprüsü AÇILDI\n";
-                // Oyun icinde ingilizce geri bildirim (Discord'a tekrar gitmesin)
+                std::cout << "­sÆ¼ [GROUPCHAT] Discord grup chat k├pr├╝s├╝ A├cILDI\n";
+                // Oyun icinde dile gore geri bildirim (Discord'a tekrar gitmesin)
                 g_bridgeSuppressEcho++;
-                sendChat((char *)"!Discord automation enabled");
+                sendChat((char *)(g_langTurkish ? "!Discord otomasyonu ACIK." : "!Discord automation enabled"));
             } else {
-                std::cout << "💬 [GROUPCHAT] Discord grup chat köprüsü KAPANDI\n";
+                std::cout << "­sÆ¼ [GROUPCHAT] Discord grup chat k├pr├╝s├╝ KAPANDI\n";
                 g_bridgeSuppressEcho++;
-                sendChat((char *)"!Discord automation disabled");
+                sendChat((char *)(g_langTurkish ? "!Discord otomasyonu KAPALI." : "!Discord automation disabled"));
             }
         } catch (...) {}
     } else {
-        std::cout << "⚠️ [GROUPCHAT] Durum degistirilemedi (HTTP " << (res ? res->status : -1) << ")\n";
+        std::cout << "-Uá´©Å [GROUPCHAT] Durum degistirilemedi (HTTP " << (res ? res->status : -1) << ")\n";
     }
 }
 
@@ -206,9 +208,9 @@ void ServerSetBotLang(bool turkish) {
 
     auto res = cli.Post("/api/lang/set", body.dump(), "application/json");
     if (res && res->status == 200) {
-        std::cout << (turkish ? "🌐 [LANG] Turkce kaydedildi (MongoDB)\n" : "🌐 [LANG] English saved (MongoDB)\n");
+        std::cout << (turkish ? "­sîÉ [LANG] Turkce kaydedildi (MongoDB)\n" : "­sîÉ [LANG] English saved (MongoDB)\n");
     } else {
-        std::cout << "⚠️ [LANG] Kaydedilemedi (HTTP " << (res ? res->status : -1) << ")\n";
+        std::cout << "-Uá´©Å [LANG] Kaydedilemedi (HTTP " << (res ? res->status : -1) << ")\n";
     }
 }
 
@@ -230,12 +232,12 @@ bool ServerSetGuildId(const char *guildId) {
         try {
             auto data = json::parse(res->body);
             if (data.value("success", false)) {
-                std::cout << "🔗 [GUILDID] Baglandi: " << guildId << "\n";
+                std::cout << "­soù [GUILDID] Baglandi: " << guildId << "\n";
                 return true;
             }
         } catch (...) {}
     }
-    std::cout << "⚠️ [GUILDID] Baglanti basarisiz (HTTP " << (res ? res->status : -1) << ")\n";
+    std::cout << "-Uá´©Å [GUILDID] Baglanti basarisiz (HTTP " << (res ? res->status : -1) << ")\n";
     return false;
 }
 
@@ -288,14 +290,14 @@ void PollDiscordChat() {
 
         // Bot dilini backend'den senkronla. Backend yalnizca guild bulabildigi
         // zaman lang gonderir; guild yoksa alan yoktur ve lokal secim (?tr/?en)
-        // korunur — backend'in "en" varsayilani ?tr'yi ezmesin.
+        // korunur - backend'in "en" varsayilani ?tr'yi ezmesin.
         if (data.contains("lang") && data["lang"].is_string()) {
             std::string lang = data["lang"].get<std::string>();
             bool bTr = (lang == "tr");
             if (bTr != g_langTurkish) {
                 g_langTurkish = bTr;
                 SaveLang();
-                std::cout << (g_langTurkish ? "🌐 [LANG] Dil: Turkce (backend poll)\n" : "🌐 [LANG] Language: English (backend poll)\n");
+                std::cout << (g_langTurkish ? "­sîÉ [LANG] Dil: Turkce (backend poll)\n" : "­sîÉ [LANG] Language: English (backend poll)\n");
             }
         }
 
@@ -339,9 +341,9 @@ void SendGStatsToDiscord(const char *szInfo) {
 
     auto res = cli.Post("/api/gstats", body.dump(), "application/json");
     if (res && res->status == 200) {
-        std::cout << "📊 [GSTATS] Discord'a gonderildi!\n";
+        std::cout << "­sôè [GSTATS] Discord'a gonderildi!\n";
     } else {
-        std::cout << "⚠️ [GSTATS] Gonderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
+        std::cout << "-Uá´©Å [GSTATS] Gonderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
     }
 
     g_gstatsRequesterId = "";
@@ -364,15 +366,15 @@ void SendAdminsToDiscord(const char *szInfo) {
 
     auto res = cli.Post("/api/admins", body.dump(), "application/json");
     if (res && res->status == 200) {
-        std::cout << "🛡️ [ADMINS] Discord'a gonderildi!\n";
+        std::cout << "­søí´©Å [ADMINS] Discord'a gonderildi!\n";
     } else {
-        std::cout << "⚠️ [ADMINS] Gonderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
+        std::cout << "-Uá´©Å [ADMINS] Gonderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
     }
 
     g_adminsRequesterId = "";
 }
 
-// 9. Oyun içi ?1414 — backup çağrısı → backup kanalına @here
+// 9. Oyun i├gi ?1414 - backup ├ga─sr─▒s─▒ -åÆ backup kanal─▒na @here
 void SendBackupCall(const char *playerName) {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
 
@@ -387,13 +389,13 @@ void SendBackupCall(const char *playerName) {
 
     auto res = cli.Post("/api/backup", body.dump(), "application/json");
     if (res && res->status == 200) {
-        std::cout << "🆘 [BACKUP] Discord'a backup cagrisi gonderildi!\n";
+        std::cout << "­såI [BACKUP] Discord'a backup cagrisi gonderildi!\n";
     } else {
-        std::cout << "⚠️ [BACKUP] Gonderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
+        std::cout << "-Uá´©Å [BACKUP] Gonderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
     }
 }
 
-// 10. Oyun içi welcome back — "X logged in" → welcome kanalına embed
+// 10. Oyun i├gi welcome back - "X logged in" -åÆ welcome kanal─▒na embed
 void SendWelcomeBack(const char *playerName) {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
     if (playerName == NULL) return;
@@ -416,13 +418,13 @@ void SendWelcomeBack(const char *playerName) {
                 std::cout << "Welcome back mesajlari kapali, bildirim atlandi.\n";
             }
         } catch (...) {}
-        std::cout << "👋 [WELCOME] Discord'a welcome back gonderildi!\n";
+        std::cout << "­sæï [WELCOME] Discord'a welcome back gonderildi!\n";
     } else {
-        std::cout << "⚠️ [WELCOME] Gonderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
+        std::cout << "-Uá´©Å [WELCOME] Gonderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
     }
 }
 
-// 11a. ?greet — welcome back bildirimlerini aç/kapat (DB'de saklanir).
+// 11a. ?greet - welcome back bildirimlerini a├g/kapat (DB'de saklanir).
 // bForceOnOff: -1 = toggle, 0 = off'a zorla, 1 = on'a zorla.
 // Sonuc GRUPTA duyurulur (kullanici: "acik mi kapali mi diye mesaj atmiyor").
 void ToggleWelcomeBackEx(int bForceOnOff) {
@@ -454,6 +456,7 @@ void ToggleWelcomeBackEx(int bForceOnOff) {
             } catch (...) {}
         }
     }
+    if (bOk) g_welcomeEnabled = enabled; // yerel kopyayi guncelle (in-game greet bunu kullanir)
 
     char szMsg[96];
     if (bOk)
@@ -462,11 +465,40 @@ void ToggleWelcomeBackEx(int bForceOnOff) {
     else
         sprintf_s(szMsg, sizeof(szMsg), g_langTurkish ? "!Welcome mesajlari degistirilemedi." : "!Could not change welcome messages.");
     sendChat(szMsg);
-    std::cout << (bOk ? (enabled ? "👋 [WELCOME] Welcome back ACIK\n" : "👋 [WELCOME] Welcome back KAPALI\n")
-                      : "⚠️ [WELCOME] Durum degistirilemedi\n");
+    std::cout << (bOk ? (enabled ? "­sæï [WELCOME] Welcome back ACIK\n" : "­sæï [WELCOME] Welcome back KAPALI\n")
+                      : "-Uá´©Å [WELCOME] Durum degistirilemedi\n");
 }
 
-// 11b. ?welcomemsg <mesaj> — kişiye özel welcome mesajı ayarla (MongoDB'de saklanır)
+// 11b. ?welcomemsg <mesaj> - ki┼siye ├zel welcome mesaj─▒ ayarla (MongoDB'de saklan─▒r)
+void SetWelcomePerUser(const char *target, const char *message) {
+    if (!g_isEngineActive || g_sessionToken.empty()) return;
+    if (!target || !target[0]) return;
+    httplib::Client cli(g_backendBase);
+    cli.set_connection_timeout(5);
+    json body = { {"hwid", g_myHWID}, {"target", std::string(target)}, {"message", message ? std::string(message) : ""} };
+    auto res = cli.Post("/api/welcome/peruser", body.dump(), "application/json");
+    if (res && res->status == 200) {
+        std::cout << "Per-user (" << target << ") ayarlandi: " << (message ? message : "(silindi)") << "\n";
+        Log("[WELCOME] Per-user %s -> %s", target, message && message[0] ? message : "(silindi)");
+    } else {
+        std::cout << "Per-user ayarlanamadi\n";
+    }
+}
+std::string GetWelcomePerUser(const char *target) {
+    if (!g_isEngineActive || g_sessionToken.empty() || !target || !target[0]) return "";
+    try {
+        httplib::Client cli(g_backendBase);
+        cli.set_connection_timeout(3);
+        std::string enc; for(char c: std::string(target)){ if(c==' ') enc+="%20"; else enc+=c; }
+        std::string url = "/api/welcome/peruser?hwid=" + g_myHWID + "&target=" + enc;
+        auto res = cli.Get(url.c_str());
+        if (res && res->status == 200) {
+            auto data = json::parse(res->body);
+            return data.value("message", "");
+        }
+    } catch(...) {}
+    return "";
+}
 void SetWelcomeMessage(const char *message) {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
 
@@ -483,10 +515,10 @@ void SetWelcomeMessage(const char *message) {
         try {
             auto data = json::parse(res->body);
             g_welcomeMessage = data.value("welcomeMessage", g_welcomeMessage);
-            std::cout << "✉️ [WELCOME] Kisisele welcome mesaji ayarlandi: " << g_welcomeMessage << "\n";
+            std::cout << "-£ë´©Å [WELCOME] Kisisele welcome mesaji ayarlandi: " << g_welcomeMessage << "\n";
         } catch (...) {}
     } else {
-        std::cout << "⚠️ [WELCOME] Mesaj ayarlanamadi (HTTP " << (res ? res->status : -1) << ")\n";
+        std::cout << "-Uá´©Å [WELCOME] Mesaj ayarlanamadi (HTTP " << (res ? res->status : -1) << ")\n";
     }
 }
 
@@ -509,6 +541,7 @@ void RefreshWelcomeState() {
     try {
         auto data = json::parse(res->body);
         g_welcomeMessage = data.value("welcomeMessage", g_welcomeMessage);
+        g_welcomeEnabled = data.value("welcomeEnabled", true); // greet on/off kopyasi
     } catch (...) {}
 }
 
@@ -542,16 +575,59 @@ void PollCommands() {
                     g_gstatsRequesterId = requesterId;
                     g_gstatsSentFirst = false;
                     g_gstatsAutoSubmit = true;
-                    std::cout << "📊 [COMMAND] Discord'dan /gstats istendi (" << cmd << ")\n";
+                    std::cout << "­sôè [COMMAND] Discord'dan /gstats istendi (" << cmd << ")\n";
                     sendServerCommand((char *)cmd.c_str());
                 } else if (type == "admins") {
                     g_waitingForAdmins = true;
                     g_adminsReqTime = GetTickCount();
                     g_adminsRequesterId = requesterId;
-                    std::cout << "🛡️ [COMMAND] Discord'dan /admins istendi (" << cmd << ")\n";
+                    std::cout << "­søí´©Å [COMMAND] Discord'dan /admins istendi (" << cmd << ")\n";
                     sendServerCommand((char *)cmd.c_str());
+                } else if (type == "grole") {
+                    std::string target = c.value("target", "");
+                    std::string role = c.value("role", "");
+                    // Fallback: eski cmd formati "/grole hakixld Member"
+                    if(target.empty() && !cmd.empty()){
+                        char t[64]={0}, r[64]={0};
+                        if(sscanf(cmd.c_str(), "/grole %63s %63[^\r\n]", t, r)==2){ target=t; role=r; }
+                        else if(sscanf(cmd.c_str(), "%63s %63[^\r\n]", t, r)==2){ target=t; role=r; }
+                    }
+                    if(!target.empty() && !role.empty()){
+                        std::cout << "­sæñ [COMMAND] Discord'dan /grole otomasyonu: " << target << " -> " << role << "\n";
+                        StartGrole(target.c_str(), role.c_str());
+                    } else if(!cmd.empty()){
+                        std::cout << "­sæñ [COMMAND] Discord'dan /grole direk: " << cmd << "\n";
+                        sendServerCommand((char *)cmd.c_str());
+                    }
+                } else if (type == "grank") {
+                    std::string target = c.value("target", "");
+                    std::string rank = c.value("rank", "");
+                    if(target.empty() && !cmd.empty()){
+                        char t[64]={0}, r[64]={0};
+                        if(sscanf(cmd.c_str(), "/grank %63s %63[^\r\n]", t, r)==2){ target=t; rank=r; }
+                        else if(sscanf(cmd.c_str(), "%63s %63[^\r\n]", t, r)==2){ target=t; rank=r; }
+                    }
+                    if(!target.empty() && !rank.empty()){
+                        std::cout << "­sÅÀ´©Å [COMMAND] Discord'dan /grank otomasyonu: " << target << " -> " << rank << "\n";
+                        StartGrank(target.c_str(), rank.c_str());
+                    } else if(!cmd.empty()){
+                        std::cout << "­sÅÀ´©Å [COMMAND] Discord'dan /grank direk: " << cmd << "\n";
+                        sendServerCommand((char *)cmd.c_str());
+                    }
+                } else if (type == "grole_list") {
+                    std::string requesterId = c.value("requesterId", "");
+                    std::string guildId = c.value("guildId", "");
+                    std::string hwid2 = c.value("hwid", "");
+                    std::cout << "­sæÑ [COMMAND] Discord'dan /grole list istendi (req=" << requesterId.substr(0,6) << ")\n";
+                    StartGroleList(requesterId.c_str(), guildId.c_str(), hwid2.c_str());
+                } else if (type == "grank_list") {
+                    std::string requesterId = c.value("requesterId", "");
+                    std::string guildId = c.value("guildId", "");
+                    std::string hwid2 = c.value("hwid", "");
+                    std::cout << "­sæÑ [COMMAND] Discord'dan /grank list istendi (req=" << requesterId.substr(0,6) << ")\n";
+                    StartGrankList(requesterId.c_str(), guildId.c_str(), hwid2.c_str());
                 } else if (!cmd.empty()) {
-                    std::cout << "🎮 [COMMAND] Discord'dan komut geldi: " << cmd << "\n";
+                    std::cout << "­sÄ« [COMMAND] Discord'dan komut geldi: " << cmd << "\n";
                     RunCommand((char *)cmd.c_str(), 1);
                 }
             }
@@ -559,7 +635,7 @@ void PollCommands() {
     } catch (...) {}
 }
 
-// 13. GZ sonucu (kill list) — "gz sonucl.txt" dosyasindan okunan metni Discord zonewar kanalina embed olarak yolla
+// 13. GZ sonucu (kill list) - "gz sonucl.txt" dosyasindan okunan metni Discord zonewar kanalina embed olarak yolla
 void SendKillList(const std::string& killListText) {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
     if (killListText.empty()) return;
@@ -577,8 +653,8 @@ void SendKillList(const std::string& killListText) {
 
     auto res = cli.Post("/api/killlist", body.dump(), "application/json");
     if (res && res->status == 200) {
-        std::cout << "⚔️ [KILLLIST] Discord'a GZ sonucu gonderildi!\n";
+        std::cout << "-Uo´©Å [KILLLIST] Discord'a GZ sonucu gonderildi!\n";
     } else {
-        std::cout << "⚠️ [KILLLIST] Gonderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
+        std::cout << "-Uá´©Å [KILLLIST] Gonderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
     }
 }

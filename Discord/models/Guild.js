@@ -1,4 +1,4 @@
-// Guild: MySQL/ProxySQL shim (db.js). Alan adları kodun geri kalanının beklediği gibi.
+﻿// Guild: MySQL/ProxySQL shim (db.js). Alan adlar─▒ kodun geri kalan─▒n─▒n bekledi─si gibi.
 module.exports = require('../db').model('guilds', {
     pkey: 'guildId',
     fields: {
@@ -14,6 +14,7 @@ module.exports = require('../db').model('guilds', {
         groupChatEnabled: { col: 'group_chat_enabled', type: 'int', def: 0 },
         lang: { col: 'lang', type: 'text', def: 'en' },
         groupName: { col: 'group_name', type: 'text', def: '' },
+        allowedRoleId: { col: 'allowed_role_id', type: 'text', def: null },
         createdAt: { col: 'created_at', type: 'text', def: () => new Date().toISOString() }
     }
 });
