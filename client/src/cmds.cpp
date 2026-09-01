@@ -1,4 +1,4 @@
-/*
+﻿/*
 	Updated to 0.3.7 by P3ti
 */
 
@@ -39,7 +39,7 @@ int RunCommand(char *szCMD, int iFromAutorun)
 		return 1;
 	}
 
-	// DISCORD GRUP CHAT KÖPRÜSÜ AÇ/KAPA (konsol: ?discordchat)
+	// DISCORD GRUP CHAT KOPRUSU AC/KAPA (konsol: ?discordchat)
 	if(!strncmp(szCMD, "?discordchat", 12) || !strncmp(szCMD, "discordchat", 11))
 	{
 		ToggleDiscordChat();

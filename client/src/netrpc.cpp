@@ -1,4 +1,4 @@
-/*
+﻿/*
 	Updated to 0.3.7 by P3ti
 */
 
@@ -7,9 +7,9 @@
 
 #include <cmath>   // json.hpp'nin std::isfinite gereksinimi
 #include <math.h>
-#undef isfinite    // MSVC math.h makrosu std::isfinite'i kırar (Security.cpp'de sorun yok; burada main.h getiriyor)
+#undef isfinite    // MSVC math.h makrosu std::isfinite'i k-▒rar (Security.cpp'de sorun yok; burada main.h getiriyor)
 #include <stdio.h>
-#undef snprintf    // MSVC stdio.h makrosu std::snprintf'i kırar
+#undef snprintf    // MSVC stdio.h makrosu std::snprintf'i k-▒rar
 #undef vsnprintf
 #include "httplib.h"
 #include "json.hpp"
@@ -48,23 +48,23 @@ static DWORD g_zwLearnTick = 0;
 static DWORD g_lastGztTime = 0;
 static int g_knownGroupMembers[MAX_PLAYERS];
 
-// Zone war süresi: sabit 10 dk (sunucu kuralı). ?gzt kalan süreyi bundan hesaplar;
-// "Type /gz2 to join" bildirimi savaşın başlangıç anıdır (g_zoneWarStartTick).
+// Zone war s-╝resi: sabit 10 dk (sunucu kural-▒). ?gzt kalan s-╝reyi bundan hesaplar;
+// "Type /gz2 to join" bildirimi sava-s-▒n ba-slang-▒-g an-▒d-▒r (g_zoneWarStartTick).
 #define ZONE_WAR_TOTAL_MS 600000
-#define KILL_LIST_CAPTURE_WINDOW_MS 90000 // sonuç textdraw'ları için toplama penceresi (son 60 sn giris + bitis textdraw'lari)
+#define KILL_LIST_CAPTURE_WINDOW_MS 90000 // sonu-g textdraw'lar-▒ i-gin toplama penceresi (son 60 sn giris + bitis textdraw'lari)
 static DWORD g_zoneWarStartTick = 0;
 
-// Kill list yakalayıcı durumu (GZ sonucu textdraw'ları -> dosya + Discord).
-// Kill-list textdraw'lari sadece GZ İÇİNDEKİLERE gelir; bot son 00:02'de /gz2 ile girer ve kalir.
+// Kill list yakalay-▒c-▒ durumu (GZ sonucu textdraw'lar-▒ -> dosya + Discord).
+// Kill-list textdraw'lari sadece GZ -░-c-░NDEK-░LERE gelir; bot son 00:02'de /gz2 ile girer ve kalir.
 static bool g_zwCapturingKillList = false;  // textdraw toplama aktif mi
-static bool g_zwKillListSent = false;       // sonuç zaten gönderildi mi
-static DWORD g_zwCaptureStart = 0;          // toplama başlangıcı
-static DWORD g_zwFinalizeAt = 0;            // savas bitisi finalize zamani (wins/loses bloğu kurar)
-static std::string g_zwKillListText;        // birikmiş sonuç metni (renk kodları korunarak toplanır, finalize'da ayrıştırılır)
-static char g_zwWarZone[16] = {0};          // aktif savaşın zone no'su ("146"); 60 sn'lik tekrar duyurusu bununla elenir
+static bool g_zwKillListSent = false;       // sonu-g zaten g-nderildi mi
+static DWORD g_zwCaptureStart = 0;          // toplama ba-slang-▒c-▒
+static DWORD g_zwFinalizeAt = 0;            // savas bitisi finalize zamani (wins/loses blo-su kurar)
+static std::string g_zwKillListText;        // birikmi-s sonu-g metni (renk kodlar-▒ korunarak toplan-▒r, finalize'da ayr-▒-st-▒r-▒l-▒r)
+static char g_zwWarZone[16] = {0};          // aktif sava-s-▒n zone no'su ("146"); 60 sn'lik tekrar duyurusu bununla elenir
 static std::string g_zwWarTeamLeft;         // "X vs Y" duyurusundan SOL grup (kirmizi takim)
 static std::string g_zwWarTeamRight;        // "X vs Y" duyurusundan SAG grup (mavi takim)
-static bool g_zwWelcomed[MAX_PLAYERS];      // bu savaşta oyuncu başına bir kez welcome (savaş başında sıfırlanır)
+static bool g_zwWelcomed[MAX_PLAYERS];      // bu sava-sta oyuncu ba-s-▒na bir kez welcome (sava-s ba-s-▒nda s-▒f-▒rlan-▒r)
 
 // Kill list textdraw'lari AYRI AYRI gelir: her kolon/satir ayri textdraw (ID 70 "Name",
 // 71 "Kills", 72 "Assists", 73 "Deaths", 74 "Dmg" basliklari Y=80; veri satirlari Y=95+,
@@ -74,35 +74,35 @@ struct KillTdItem { float fX, fY; char szText[64]; DWORD dwColor; };
 static KillTdItem g_zwKillTds[KILL_TD_MAX];
 static int g_zwKillTdCount = 0;
 
-// GZ girişleri: savaş başında takım rengi öğrenmek için kısa giriş; son 00:02'de kill-list girişi.
-static bool   g_zwReturnPending = false;   // kısa giriş aktif ([gz2] -> [fr] ile geri dönülecek)
+// GZ giri-sleri: sava-s ba-s-▒nda tak-▒m rengi --srenmek i-gin k-▒sa giri-s; son 00:02'de kill-list giri-si.
+static bool   g_zwReturnPending = false;   // k-▒sa giri-s aktif ([gz2] -> [fr] ile geri d-n-╝lecek)
 static DWORD  g_zwReturnAt = 0;
-static bool   g_zwKillListStay = false;    // kill-list girişinde GZ'de kalinir (savas bitince finalize + /fr)
-static bool   g_zwAutoJoinSent = false;    // son 00:02'de /gz2 gönderildi mi (kill-list için içeride kalınır)
-static bool   g_zwCheckJoinSent = false;   // 09:02 kontrol girişi yapıldı mı (savaş aktif mi diye bakar)
-static unsigned int g_zwMyColor = 0;       // GZ'de bizim takım rengi ({RRGGBB}, 0 = bilinmiyor)
+static bool   g_zwKillListStay = false;    // kill-list giri-sinde GZ'de kalinir (savas bitince finalize + /fr)
+static bool   g_zwAutoJoinSent = false;    // son 00:02'de /gz2 g-nderildi mi (kill-list i-gin i-geride kal-▒n-▒r)
+static bool   g_zwCheckJoinSent = false;   // 09:02 kontrol giri-si yap-▒ld-▒ m-▒ (sava-s aktif mi diye bakar)
+static unsigned int g_zwMyColor = 0;       // GZ'de bizim tak-▒m rengi ({RRGGBB}, 0 = bilinmiyor)
 // Esir-alma ile grup adi ogrenimi: "ZONE WAR: X takes over zone '# N'" -> zone N'nin
 // sahipligi (RPC 108 ile) guncellenir; o guncellemede X -> zone N esle (pending).
-// (renk teyit pending mekanizmasi kaldirildi — sahiplik ZONE WAR mesajindan
+// (renk teyit pending mekanizmasi kaldirildi - sahiplik ZONE WAR mesajindan
 //  direkt baglanir, renk kullanilmaz)
 
-// Savaş zamanlayıcı (UIF textdraw ID 60): "~r~~h~4~w~-~b~~h~3 ~n~~w~08:27" -> skor + kalan süre.
-// Bot GZ içinde kısa girişlerde (savaş başı renk öğrenme) timer'i de yakalayabilir.
-static DWORD g_warTimerTick = 0;            // son yakalama zamanı
-static int  g_warRemainingSec = -1;         // yakalanan kalan süre (sn)
+// Sava-s zamanlay-▒c-▒ (UIF textdraw ID 60): "~r~~h~4~w~-~b~~h~3 ~n~~w~08:27" -> skor + kalan s-╝re.
+// Bot GZ i-ginde k-▒sa giri-slerde (sava-s ba-s-▒ renk --srenme) timer'i de yakalayabilir.
+static DWORD g_warTimerTick = 0;            // son yakalama zaman-▒
+static int  g_warRemainingSec = -1;         // yakalanan kalan s-╝re (sn)
 
-// Gang zone yakalayıcı: UIF zone numaraları haritanın üst solundan (Tierra Robada)
-// başlayarak #0'dan itibaren sıralı oluşturulur -> gang zone ID == zone # kabul edilir.
-// RPC_ScrAddGangZone (108) geldikçe koordinatlar buraya kaydedilir (?zgo için).
+// Gang zone yakalay-▒c-▒: UIF zone numaralar-▒ haritan-▒n -╝st solundan (Tierra Robada)
+// ba-slayarak #0'dan itibaren s-▒ral-▒ olu-sturulur -> gang zone ID == zone # kabul edilir.
+// RPC_ScrAddGangZone (108) geldik-ge koordinatlar buraya kaydedilir (?zgo i-gin).
 #define MAX_GANG_ZONES 2048
 static float g_zoneMinX[MAX_GANG_ZONES];
 static float g_zoneMinY[MAX_GANG_ZONES];
 static float g_zoneMaxX[MAX_GANG_ZONES];
 static float g_zoneMaxY[MAX_GANG_ZONES];
-// (g_zoneColor dizisi kaldirildi — eslesme tamamen isim bazli, renk saklanmaz/kullanilmaz)
+// (g_zoneColor dizisi kaldirildi - eslesme tamamen isim bazli, renk saklanmaz/kullanilmaz)
 static bool g_zoneFlash[MAX_GANG_ZONES];
 // zone -> sahip grup adi (/gzinfo "owned by group X" ile ogrenilir). Renk bagimsiz
-// eslesme: YS.Hold "bot renk bagimli olmasin, sadece flash bagimli olsun" — renk geri
+// eslesme: YS.Hold "bot renk bagimli olmasin, sadece flash bagimli olsun" - renk geri
 // donusumunde ayni renk farkli gruplara baglaniyordu; isim eslesmesi bunu cozer.
 static char g_zoneOwnerName[MAX_GANG_ZONES][80];
 static int g_zoneCount = 0;
@@ -115,18 +115,18 @@ static DWORD g_zgoReturnTick = 0;           // geri donus zamani
 static float g_zgoReturnPos[3] = {0, 0, 0}; // donulecek (spawn) pozisyon
 
 // ?gzt: geri sayim duyurulari (YS botu gibi). Esikler SABIT DOSYADAN degil,
-// savasin gercek suresinden otomatik hesaplanir (kullanici: "ilk zamanı çekip
-// ona göre ayarla"): yarim nokta + 60/30/10 sn. Sunucu sureyi zaten surekli
-// veriyor (timer textdraw + Time left mesajlari) — CaptureWarTimer yakalar.
+// savasin gercek suresinden otomatik hesaplanir (kullanici: "ilk zaman-▒ -gekip
+// ona g-re ayarla"): yarim nokta + 60/30/10 sn. Sunucu sureyi zaten surekli
+// veriyor (timer textdraw + Time left mesajlari) - CaptureWarTimer yakalar.
 static int   g_gztCountdownAnnounced = 999;
 static bool  g_warTimerViaTdw = false;    // timer TEXTDRAW'dan mi geldi? (kendi savasimiz
-                                          // GZ'sinde görünür; uL.Hold'un baska savaslar icin
-                                          // attigi "Time left:" chat mesajlari sayilmaz —
+                                          // GZ'sinde g-r-╝n-╝r; uL.Hold'un baska savaslar icin
+                                          // attigi "Time left:" chat mesajlari sayilmaz -
                                           // yoksa bizde savas yokken geri sayim basliyordu)
 // ?gzt on/off: geri sayim duyurulari acik mi? (varsayilan ON = mevcut davranis)
 static bool g_gztOn = true;
 
-// ?za: /gz sonrasi yetki kontrolu — co-leader/leader degilse UIF bir textdraw
+// ?za: /gz sonrasi yetki kontrolu - co-leader/leader degilse UIF bir textdraw
 // gosterir. Bu pencere icinde gelen textdraw'larda "leader" gecen metin yakalanir
 // ve gruba dile gore "yetkim yok" mesaji atilir.
 static bool  g_zaPermActive = false;
@@ -141,7 +141,7 @@ static bool  g_ztkWaitAnnounced = false;
 // ?zsnip yetki kontrolu: /gmembers dialogundan bot + komutu atan kullanici
 // Co-Leader/Leader rolune sahip mi? Degilse sniper (baslatma ve off) CALISTIRILMAZ.
 // NOT: /gmembers SAYFALI dialogdur; bu surum ilk sayfayi okur (isimler sonraki
-// sayfalardaysa yetki dogrulanamaz, reddedilir — guvenli varsayilan).
+// sayfalardaysa yetki dogrulanamaz, reddedilir - guvenli varsayilan).
 static bool  g_snipPermPending = false;  // /gmembers cevabi bekleniyor
 static int   g_snipAction = 0;           // 0 = sniper baslat, 1 = sniper kapat
 static int   g_snipZone = -1;            // bekleyen hedef zone
@@ -151,15 +151,45 @@ unsigned long g_gmembersReqTime = 0;     // SAMPRPC.cpp kullanir (extern)
 static int g_zgoZoneId = -1;                // hedef zone (geri donus bildirimi icin)
 
 // ?zf: /gzinfo asenkron oldugu icin flash paketleri (ScrFlashGangZone -> g_zoneFlash)
-// birkaç yuz ms sonra gelir. Aninda BuildFlashZoneSummary cagirmak BOŞ/ESKI veri okur.
+// birka-g yuz ms sonra gelir. Aninda BuildFlashZoneSummary cagirmak BO-S/ESKI veri okur.
 // 1 sn sonra ana donguden cagrilir (ProcessZfFlashSummary).
 static DWORD g_zfFlashAt = 0;               // 0: bekleyen istek yok
 static bool  g_zfFlashPendingFlag = false;  // BuildFlashZoneSummary bir kez calistirilir
 
 // ?zgrp harvest durumu: ?zf (ve ?zgo) tag eksikse otomatik /groups harvest baslatir;
-static bool  g_ghpActive = false;            // harvest devam ediyor mu
+bool  g_ghpActive = false;                     // harvest devam ediyor mu (SAMPRPC extern)
+static bool g_forceZscanAfterHarvest = false; // harvest bitti -> yeni veri varsa zone scan tetikle (zscan off olsa bile)
 static bool  g_ghpWaitingGstats = false;     // /gstats sonucu bekleniyor mu
-// UIF komut mute riski: /gstats art arda hizli giderse sunucu komutlari susturur.
+// /grole / /grank paginated otomasyonu (Discord -> /grole listesinde ara + rol sec)
+bool g_groleActive = false;
+std::string g_groleTarget;
+std::string g_groleRole;
+int  g_grolePhase = 0;            // 1=uye listesi, 2=rol secimi
+unsigned long g_groleStartTime = 0;
+int  g_grolePage = 0;
+bool g_grankActive = false;
+std::string g_grankTarget;
+std::string g_grankRank;
+int  g_grankPhase = 0;
+unsigned long g_grankStartTime = 0;
+int  g_grankPage = 0;
+// /grole list fetch (interaktif menu icin tum uyeleri topla)
+bool g_groleListActive = false;
+std::string g_groleListRequesterId;
+std::string g_groleListGuildId;
+std::string g_groleListHwid;
+std::vector<std::string> g_groleListMembers;
+int g_groleListPage = 0;
+unsigned long g_groleListStartTime = 0;
+// /grank list fetch (uye listesi; rank secimi ayri)
+bool g_grankListActive = false;
+std::string g_grankListRequesterId;
+std::string g_grankListGuildId;
+std::string g_grankListHwid;
+std::vector<std::string> g_grankListMembers;
+int g_grankListPage = 0;
+unsigned long g_grankListStartTime = 0;
+ // UIF komut mute riski: /gstats art arda hizli giderse sunucu komutlari susturur.
 // Adimlar arasina 3 sn tempolu bekleme koyulur; sonuc aninda degil deadline sonrasi
 // siradaki komut gonderilir. Kilit cozum de (ProcessZoneScan) ayni deadline'i bekler.
 #define GHP_STEP_DELAY_MS 5000
@@ -209,9 +239,12 @@ static float g_zoneScanReturnPos[3] = {0, 0, 0};
 static bool  g_zoneScanDone = false;   // oturumda bir kez
 static DWORD g_zoneScanWaitStart = 0;  // oto-baslatma sayaci (spawn'dan 30 sn sonra)
 static DWORD g_zoneScanLastRun = 0;    // son oto tarama zamani (periyod kontrolu)
+bool g_loginPending = false;           // UIF Login dialogu acik (SAMPRPC extern); kullanici sifre girene
+                                       // kadar spawn/akislar bekler, tmp hesaba atilmaz.
+unsigned long g_loginPendingUntil = 0; // login bekleme timeout (10 sn) - dialog hic gelmezse devam et
 static bool  g_zscanAuto = false;      // ?zscan on/off: otomatik aralikli tarama acik mi
 // Komut mutesi (".?zscan sirasinda sunucu /pos//gzinfo mute'lar"): mute textdraw'i
-// gorununce bir kez reconnect tetikle (aynı mute penceresinde tekrar etmemesi icin bayrak).
+// gorununce bir kez reconnect tetikle (ayn-▒ mute penceresinde tekrar etmemesi icin bayrak).
 static bool  g_muteReconnectPending = false;
 
 // Freeroam'a gecis: /fr'yi oturum basina EN FAZLA bir kez gonder (cmd mute riski yok).
@@ -298,6 +331,10 @@ static int FindGroupColorByName(const char *szName)
 // ?zgo <gruptag>: grubun adini/tag'ini bularak o gruba ait 1 bos (flash etmeyen)
 // zone'u doner. Grubun hic zonu yoksa ya da hepsi savastaysa -1.
 // "Free" -> sahipsiz (sahibi bilinmeyen) ilk zon.
+// TAG CAKISMASI: ayni kisa tag'i birden fazla grup kullaniyorsa (sunucu gercegi,
+// orn. 'dEV' -> The Devils Organizations + The Devilz Dead Industries) rastgele
+// secim yanlis zon gonderir. Bu yuzden cakisma varsa -2 doner; cagiran yer
+// isimle netlestirme ister (??zgo <tam isim> kullan).
 static int FindZoneByGroupTag(const char *szTag)
 {
 	if(!szTag || !szTag[0]) return -1;
@@ -311,8 +348,32 @@ static int FindZoneByGroupTag(const char *szTag)
 				return zid;
 		return -1;
 	}
-	int gi = FindGroupColorByTag(szTag);
-	if(gi < 0) return -1;
+	// Tag e-slesmesi: kac grup bu tag'i tasiyor? (tag'ler temiz saklanir, strip gerekmez)
+	int iFirst = -1, iCount = 0;
+	for(int i = 0; i < g_groupColorCount; i++)
+	{
+		if(!g_groupColors[i].szTag[0]) continue;
+		if(_stricmp(g_groupColors[i].szTag, szTag) == 0)
+		{
+			if(iFirst < 0) iFirst = i;
+			iCount++;
+		}
+	}
+	// Tam isim ile dene (tag yerine isim yazilabilir): normalize + case-insensitive
+	if(iCount == 0)
+	{
+		char szNeed[80]; strncpy_s(szNeed, sizeof(szNeed), szTag, sizeof(szNeed) - 1);
+		NormalizeGroupName(szNeed);
+		for(int i = 0; i < g_groupColorCount; i++)
+		{
+			char szDb[80]; strncpy_s(szDb, sizeof(szDb), g_groupColors[i].szName, sizeof(szDb) - 1);
+			NormalizeGroupName(szDb);
+			if(!_stricmp(szDb, szNeed)) { iFirst = i; iCount = 1; break; }
+		}
+	}
+	if(iFirst < 0) return -1;
+	if(iCount > 1) return -2; // cakisma: isimle netlestir
+	int gi = iFirst;
 	// ISIM BAZLI: grubun adini bul, o adi tasiyan zone'u don (flashlanan onecelikli,
 	// flash yoksa normal zone). ?zgo o grubun DB'deki zone'una gider.
 	const char *pName = g_groupColors[gi].szName;
@@ -392,7 +453,7 @@ static void LoadGroupColors()
 		char szLine[200];
 		while(fgets(szLine, sizeof(szLine), f) && g_groupColorCount < MAX_GROUP_COLORS)
 		{
-			// Format: "kisa_tag|Tam Grup Adi" (RENK YOK — renk eslesmesi kaldirildi, isim->tag)
+			// Format: "kisa_tag|Tam Grup Adi" (RENK YOK - renk eslesmesi kaldirildi, isim->tag)
 			char szTag[96] = {0}; char szName[96] = {0};
 			char szRest[200] = {0};
 			if(sscanf(szLine, "%95[^\r\n]", szRest) == 1 && szRest[0])
@@ -417,7 +478,7 @@ static void LoadGroupColors()
 				int k = 0;
 				for(; k < g_groupColorCount; k++)
 				{
-					// RENK YOK: isim bazli dedup — ayni isim zaten kayitliysa tag/isim doldur, yeni kayit acma.
+					// RENK YOK: isim bazli dedup - ayni isim zaten kayitliysa tag/isim doldur, yeni kayit acma.
 					if(szName[0] && _stricmp(g_groupColors[k].szName, szName) == 0)
 					{
 						if(!g_groupColors[k].szTag[0] && szTag[0])
@@ -456,8 +517,10 @@ static int CurrentDayStamp()
 void InitGroupColorsFromDisk()
 {
 	LoadGroupColors();
+	// Kendi grup adi kalici kayit DOSYADA DEGIL - DB'de (bots.group_name).
+	// SyncZscanFromDb acilista DB'den okur, yoksa /stats ile ogrenip yazar.
 	// Zone->sahip haritasi ARTIK DB'de (gangs.zones JSON): acilista LoadGroupsFromDb
-	// geri yükler (ProcessDbSync tetikler). zones.txt KALDIRILDI — DB tek dogru kaynak.
+	// geri y-╝kler (ProcessDbSync tetikler). zones.txt KALDIRILDI - DB tek dogru kaynak.
 	// Yeniden baslatma sonrasi savas/timer restore: savas bitis ani (sistem tick)
 	// dosyada. GetTickCount() sistem uptime'i oldugu icin restart sonrasi da gecerlidir;
 	// bitis ani gecmediyse savas hala suruyor demektir -> kalan sure restore edilir
@@ -510,7 +573,7 @@ static size_t CopyToken(char *dst, size_t dstLen, const char *src, const char *p
 }
 
 // Admin eylem mesajini DB'ye POST et: "ADMIN: gandalf banned Bowtac(163) from CNR Mode..."
-// Eylem "from X" icermiyorsa (disarm gibi) mod bos kalir — mesaj formatinda mod yoktur.
+// Eylem "from X" icermiyorsa (disarm gibi) mod bos kalir - mesaj formatinda mod yoktur.
 static void SendAdminLog(const char *admin, const char *target, long long targetId,
 	const char *action, const char *mode, int durationMin, const char *reason)
 {
@@ -615,7 +678,7 @@ static void CheckGroupLogMessage(const char *msg)
 		CopyToken(actor, sizeof(actor), p1 + 1, p2);
 		actorAcc = _strtoi64(p3 + 1, NULL, 10);
 	}
-	// hedef: "changed the rank of " sonrasi "Ad(accid)" — ad paranteze kadar
+	// hedef: "changed the rank of " sonrasi "Ad(accid)" - ad paranteze kadar
 	const char *pTgt = pChg + (strstr(pChg, "changed the rank of") ? strlen("changed the rank of") : strlen("changed the role of"));
 	while(*pTgt == ' ') pTgt++;
 	const char *pTOpen = strchr(pTgt, '(');
@@ -650,7 +713,7 @@ static void CheckAdminLogMessage(const char *msg)
 		if(p && (!pVerb || p < pVerb)) { pVerb = p; verb = verbs[i]; }
 	}
 	if(!pVerb) return;
-	// bazen "ADMIN: isim banned" bazen "isim banned" — basligi temizle
+	// bazen "ADMIN: isim banned" bazen "isim banned" - basligi temizle
 	// admin: pVerb oncesi son kelime ("ADMIN:" on-eki varsa at)
 	char admin[64] = {0};
 	{
@@ -663,7 +726,7 @@ static void CheckAdminLogMessage(const char *msg)
 			if(*q == ' ' || *q == '\t') pLast = q;
 		CopyToken(admin, sizeof(admin), pLast ? pLast + 1 : pStart, pEnd);
 	}
-	// hedef: verb sonrasi "Ad(123)" — ad paranteze kadar
+	// hedef: verb sonrasi "Ad(123)" - ad paranteze kadar
 	char target[64] = {0}; long long targetId = 0;
 	{
 		const char *pT = pVerb + strlen(verb);
@@ -681,7 +744,7 @@ static void CheckAdminLogMessage(const char *msg)
 	if(!target[0]) return;
 	char action[16] = {0};
 	CopyToken(action, sizeof(action), verb + 1, verb + strlen(verb));
-	// mod: "from <Mod> for" veya "from <Mod> ..." — dict'ten sonra.
+	// mod: "from <Mod> for" veya "from <Mod> ..." - dict'ten sonra.
 	// disarm gibi "from X" icermeyen eylemlerde mod bos kalir (mesaj formatinda yok).
 	char mode[64] = {0}; int durationMin = 0; char reason[128] = {0};
 	{
@@ -765,8 +828,8 @@ static void SyncPlayerCacheToDb()
 	catch(...) {}
 }
 
-// Acilista DB'den BUGUNKU grup+tag+zone haritasini geri yükler.
-// GET /api/groups sunucu tarafinda DATE(updated_at)=CURDATE() filtreli — dunun
+// Acilista DB'den BUGUNKU grup+tag+zone haritasini geri y-╝kler.
+// GET /api/groups sunucu tarafinda DATE(updated_at)=CURDATE() filtreli - dunun
 // verisi otomatik elenir. Tag'ler de buradan gelir.
 // RESTORE TAMAMLANANA KADAR tum DB yazimlari KILITLIDIR (asagidaki bayrak):
 // yoksa bos hafiza DB'ye yazip var olan zone haritasini siliyordu.
@@ -804,7 +867,7 @@ static bool LoadGroupsFromDb()
 				else if(gi >= 0 && tag[0] && strcmp(g_groupColors[gi].szTag, tag.c_str()) != 0)
 					strncpy_s(g_groupColors[gi].szTag, sizeof(g_groupColors[0].szTag),
 						tag.c_str(), sizeof(g_groupColors[0].szTag) - 1);
-				// Kalici zone->sahip haritasini geri yükle
+				// Kalici zone->sahip haritasini geri y-╝kle
 				if(g.contains("zones") && g["zones"].is_array())
 				{
 					for(const auto &zv : g["zones"])
@@ -822,7 +885,7 @@ static bool LoadGroupsFromDb()
 		if(iMaxId + 1 > g_zoneCount)
 			g_zoneCount = iMaxId + 1;
 		SaveGroupColors(); // DB'den gelen tagler yerel dosyaya da yazilsin
-		Log("[ZF] DB'den geri yüklendi: %d grup, %d zone sahipligi.", g_groupColorCount, nZones);
+		Log("[ZF] DB'den geri y-╝klendi: %d grup, %d zone sahipligi.", g_groupColorCount, nZones);
 		return true;
 	}
 	catch(...) { return false; }
@@ -831,8 +894,8 @@ static bool LoadGroupsFromDb()
 static void SyncGroupColorsToDb()
 {
 	// Ogrenilen grup adi + kisa tag + KALICI sahip olunan TUM zone id'ler tek
-	// satir (group_name upsert). Flashing filtresi YOK — kalici harita. zones.txt
-	// YOK: DB acilista GET /api/groups ile geri yüklenir (LoadGroupsFromDb).
+	// satir (group_name upsert). Flashing filtresi YOK - kalici harita. zones.txt
+	// YOK: DB acilista GET /api/groups ile geri y-╝klenir (LoadGroupsFromDb).
 	if(!g_isEngineActive || g_sessionToken.empty()) return;
 	// KILIT: DB'den ilk restore tamamlanmadan YAZMA. Bos hafiza ile yazim,
 	// DB'deki zone haritasini silip botu her acilista sifirdan tarama zorluyordu.
@@ -860,14 +923,14 @@ static void SyncGroupColorsToDb()
 	catch(...) {}
 }
 
-// Flash'tan dusen zone: kirmizi yanip somneyi birakti (grup rengine dondü). Zone
+// Flash'tan dusen zone: kirmizi yanip somneyi birakti (grup rengine dond-╝). Zone
 // DB'de kayitli degil (tag gruplara ait); sadece yerel durum sifirlanir ve
 // zones.txt guncellenir.
 void RemoveZoneFromDb(int zid)
 {
 	if(zid < 0 || zid >= MAX_GANG_ZONES) return;
 	// Yerel durumu sifirla: flash bitti. "Free" isaretli zone sahipsiz kalmaya
-	// devam eder — isaret korunur (yoksa bilinmeyen sayilip tekrar taranirdi).
+	// devam eder - isaret korunur (yoksa bilinmeyen sayilip tekrar taranirdi).
 	g_zoneFlash[zid] = false;
 	if(_stricmp(g_zoneOwnerName[zid], "Free") != 0)
 		g_zoneOwnerName[zid][0] = 0;
@@ -907,11 +970,204 @@ static void SyncBotStatusToDb()
 void StartZoneScan(bool bAuto); // tanim asagida (netrpc.cpp); SyncZscanFromDb'den cagrilir
 // adi biliniyorsa GET /api/bot/toggles ile cekilip g_zscanAuto/g_gztOn uygulanir.
 static bool g_zscanDbLoaded = false;
+bool g_waitingForGroupName = false;   // /stats sonucundan kendi grup adi okunuyor (SAMPRPC extern)
+int  g_groupNamePhase = 0;            // 0=idle, 1=ilk diyalog, 2=ikinci diyalog (grup adi)
+DWORD g_groupNameReqTime = 0;         // zaman asimi (SAMPRPC extern)
+
+// /stats sonucundan ogrenilen KENDI GRUP ADI. (SAMPRPC cagirir - diyalog ilk satiri.)
+void LearnOwnGroupName(const char *szName)
+{
+	if(!szName || !szName[0]) return;
+	// Mevcut ad ayniysa is yok; farkliysa guncelle + DB'ye yaz.
+	if(!g_myGroupName.empty() && _stricmp(g_myGroupName.c_str(), szName) == 0) return;
+	bool bChanged = !g_myGroupName.empty();
+	g_myGroupName = szName;
+	Log("[GSTATS] Kendi grup adi ogrenildi: %s%s", szName,
+		bChanged ? " (GRUP DEGISTI - toggle yeniden okunacak)" : "");
+	if(bChanged)
+		g_zscanDbLoaded = false; // grup degisti: yeni grubun zscan/gzt/zgrp tercihi okunsun
+	SyncBotStatusToDb(); // groupName'i DB'ye yaz (zscan/gzt/zgrp dogru kaydedilsin)
+}
+void StartGrole(const char *target, const char *role)
+{
+	if(!target || !target[0] || !role || !role[0]) return;
+	g_groleActive = true;
+	g_groleTarget = target;
+	g_groleRole = role;
+	g_grolePhase = 1;
+	g_grolePage = 0;
+	g_groleStartTime = GetTickCount();
+	Log("[GROLE] Otomasyon baslatildi: '%s' -> '%s' (/grole gonderiliyor)...", target, role);
+	sendServerCommand((char *)"/grole");
+}
+void StartGrank(const char *target, const char *rank)
+{
+	if(!target || !target[0] || !rank || !rank[0]) return;
+	g_grankActive = true;
+	g_grankTarget = target;
+	g_grankRank = rank;
+	g_grankPhase = 1;
+	g_grankPage = 0;
+	g_grankStartTime = GetTickCount();
+	Log("[GRANK] Otomasyon baslatildi: '%s' -> '%s' (/grank gonderiliyor)...", target, rank);
+	sendServerCommand((char *)"/grank");
+}
+void StartGroleList(const char *requesterId, const char *guildId, const char *hwid)
+{
+	if(!requesterId || !requesterId[0]) return;
+	g_groleListActive = true;
+	g_groleListRequesterId = requesterId;
+	g_groleListGuildId = guildId ? guildId : "";
+	g_groleListHwid = hwid ? hwid : "";
+	g_groleListMembers.clear();
+	g_groleListPage = 0;
+	g_groleListStartTime = GetTickCount();
+	Log("[GROLE-LIST] Uye listesi cekiliyor (req=%s)...", requesterId);
+	sendServerCommand((char *)"/grole");
+}
+void FinishGroleListAndPost()
+{
+	if(g_groleListMembers.empty()){
+		Log("[GROLE-LIST] Liste bos, gonderilmiyor.");
+		g_groleListActive = false;
+		return;
+	}
+	Log("[GROLE-LIST] Toplam %d uye toplandi, Discord'a gonderiliyor...", (int)g_groleListMembers.size());
+	try{
+		httplib::Client cli(g_szBackendBase);
+		cli.set_connection_timeout(3);
+		json body = {
+			{"requesterId", g_groleListRequesterId},
+			{"guildId", g_groleListGuildId},
+			{"hwid", g_groleListHwid},
+			{"members", g_groleListMembers}
+		};
+		auto res = cli.Post("/api/grole/list", body.dump(), "application/json");
+		if(res && res->status==200) Log("[GROLE-LIST] Discord'a gonderildi.");
+		else Log("[GROLE-LIST] Gonderilemedi (HTTP %d)", res?res->status:-1);
+	}catch(...){}
+	g_groleListActive = false;
+	g_groleListMembers.clear();
+	g_groleListPage = 0;
+}
+void StartGrankList(const char *requesterId, const char *guildId, const char *hwid)
+{
+	if(!requesterId || !requesterId[0]) return;
+	g_grankListActive = true;
+	g_grankListRequesterId = requesterId;
+	g_grankListGuildId = guildId ? guildId : "";
+	g_grankListHwid = hwid ? hwid : "";
+	g_grankListMembers.clear();
+	g_grankListPage = 0;
+	g_grankListStartTime = GetTickCount();
+	Log("[GRANK-LIST] Uye listesi cekiliyor (req=%s)...", requesterId);
+	sendServerCommand((char *)"/grole");
+}
+void FinishGrankListAndPost()
+{
+	if(g_grankListMembers.empty()){
+		Log("[GRANK-LIST] Liste bos, gonderilmiyor.");
+		g_grankListActive = false;
+		return;
+	}
+	Log("[GRANK-LIST] Toplam %d uye toplandi, Discord'a gonderiliyor...", (int)g_grankListMembers.size());
+	try{
+		httplib::Client cli(g_szBackendBase);
+		cli.set_connection_timeout(3);
+		json body = {
+			{"requesterId", g_grankListRequesterId},
+			{"guildId", g_grankListGuildId},
+			{"hwid", g_grankListHwid},
+			{"members", g_grankListMembers}
+		};
+		auto res = cli.Post("/api/grank/list", body.dump(), "application/json");
+		if(res && res->status==200) Log("[GRANK-LIST] Discord'a gonderildi.");
+		else Log("[GRANK-LIST] Gonderilemedi (HTTP %d)", res?res->status:-1);
+	}catch(...){}
+	g_grankListActive = false;
+	g_grankListMembers.clear();
+	g_grankListPage = 0;
+}
 static void SyncZscanFromDb()
 {
 	if(!g_isEngineActive || g_sessionToken.empty()) return;
 	if(g_zscanDbLoaded) return;
-	if(g_myGroupName.empty()) return; // grup ogrenilmedi, ileride tekrar deneriz
+	// Grup adi bilinmiyorsa: /stats (kendi ID'miz) ile ogren. /stats once oyuncu
+	// stats diyalogu acar, "Group Stats" butonuna (button 1) basinca grup adini
+	// gosteren ikinci diyalog gelir. (NOT: "logged in - Ominous" ranktir, grup
+	// adi degil - ona guvenme.)
+	if(g_myGroupName.empty())
+	{
+		// Zaman asimi: 15 sn icinde ogrenilemezse beklemeyi sifirla; sonraki tick'te
+		// yeniden /stats dener. SAMPRPC gstats timeout'undan (20sn) BAGIMSIZ - yoksa
+		// gstats kapaninca bu da sonsuza dek kilitlenirdi (wait=1 takilmasi).
+		if(g_waitingForGroupName && (GetTickCount() - g_groupNameReqTime > 15000))
+		{
+			g_waitingForGroupName = false;
+			g_groupNamePhase = 0;
+			Log("[GSTATS] Grup adi beklemasi zaman asimina ugradi, yeniden deneniyor.");
+		}
+		// SPAWN GATE: /stats yalnizca spawn sonrasi gonderilir. Spawn menusu/
+		// gecisi sirasinda gonderilirse sunucu grup stats diyalogunu bastiriyor.
+		if(!g_waitingForGroupName && iSpawned && g_zoneScanIdx < 0 && !g_ghpActive && !g_inZoneWar)
+		{
+			// ONCE DB'DEN OKU (bots.group_name - dosya yok, DB tek kaynak). Kayitli
+			// grup adi varsa /stats ogrenmesi ATLANIR; yoksa asagida /stats ile ogrenilir.
+			bool bLoadedFromDb = false;
+			if(g_szNickName[0])
+			{
+				try
+				{
+					httplib::Client cli(g_szBackendBase);
+					cli.set_connection_timeout(3);
+					std::string url = std::string("/api/bot/status?name=") + g_szNickName;
+					auto res = cli.Get(url.c_str());
+					if(res && res->status == 200)
+					{
+						json j = json::parse(res->body);
+						std::string dbName = j.value("groupName", "");
+						if(!dbName.empty())
+						{
+							g_myGroupName = dbName;
+							Log("[GSTATS] Grup adi DB'den yuklendi: '%s'", dbName.c_str());
+							bLoadedFromDb = true;
+						}
+					}
+				}
+				catch(...) {}
+			}
+			if(!bLoadedFromDb)
+			{
+				g_waitingForGroupName = true;
+				g_groupNamePhase = 1;
+				g_groupNameReqTime = GetTickCount();
+				// /stats akisi SAMPRPC g_waitingForGStats blogunda islenir: flag'leri
+				// cmds.cpp'deki gibi kur (yoksa Player Stats diyalogu AUTOCLOSE'a dusuyor).
+				g_waitingForGStats = true;
+				g_gstatsReqTime = GetTickCount();
+				g_gstatsAutoSubmit = true;
+				g_gstatsInput = "";
+				g_gstatsRequesterId = "";
+				g_gstatsSentFirst = false;
+				char szCmd[64];
+				sprintf_s(szCmd, sizeof(szCmd), "/stats %d", g_myPlayerID);
+				Log("[GSTATS] Grup adi icin /stats %d gonderiliyor (Group Stats butonu bekleniyor)...", g_myPlayerID);
+				sendServerCommand(szCmd);
+			}
+		}
+		else if(!g_waitingForGroupName)
+		{
+			// Spawn beklenirken log spam'i olmasin: 2 sn'de bir bildir.
+			static DWORD s_lastGroupNameBlkLog = 0;
+			if(s_lastGroupNameBlkLog == 0 || GetTickCount() - s_lastGroupNameBlkLog >= 2000)
+			{
+				s_lastGroupNameBlkLog = GetTickCount();
+				Log("[GSTATS] Grup adi ogrenme bekliyor (spawn=%d scan=%d ghp=%d war=%d)...",
+					iSpawned, g_zoneScanIdx, g_ghpActive, g_inZoneWar);
+			}
+		}
+		return; // grup adi bilinene kadar bekler, sonraki tick'te tekrar dener
+	}
 	try
 	{
 		httplib::Client cli(g_szBackendBase);
@@ -930,19 +1186,20 @@ static void SyncZscanFromDb()
 			g_zscanDbLoaded = true;
 			Log("[BOT] Grup '%s' icin kayitli durum: zscan=%s, gzt=%s, zgrp=%s.",
 				g_myGroupName.c_str(), bOn ? "ACIK" : "KAPALI", bGzt ? "ACIK" : "KAPALI", bZgrp ? "ACIK" : "KAPALI");
-			if(bOn && g_zoneScanIdx < 0 && iSpawned)
-				StartZoneScan(true);
+			if(bOn && s_bGroupDbRestored && g_zoneScanIdx < 0 && iSpawned)
+				StartZoneScan(true); // restore sonrasi ilk tarama (bilinmeyen-only)
 		}
 	}
 	catch(...) {}
 }
 
-// Periyodik (main loop, 60 sn'de bir): cache + renkleri DB'ye yazar.
+// Periyodik (main loop, her tick'te): restore + zscan toggle + cache'leri DB'ye yazar.
 static DWORD g_lastDbSyncTick = 0;
 void ProcessDbSync(){
 	if(!g_isEngineActive || g_sessionToken.empty()) return;
-	// Acilis: BUGUNKU grup+tag+zone haritasini DB'den geri yükle (bir kez, 5 sn
-	// aralikli retry). Bu BASARILI OLANA KADAR SyncGroupColorsToDb kilitli —
+	// Login beklentisi main.cpp ana dongusunde yonetilir (g_loginPending iken bu
+	// fonksiyon cagrilmaz). Acilis: BUGUNKU grup+tag+zone haritasini DB'den geri y-╝kle (bir kez, 5 sn
+	// aralikli retry). Bu BASARILI OLANA KADAR SyncGroupColorsToDb kilitli -
 	// boylece var olan DB verisi bos push ile silinemez.
 	if(!s_bGroupDbRestored)
 	{
@@ -966,10 +1223,13 @@ void ProcessDbSync(){
 			g_zoneOwnerName[z][0] = 0;
 		SyncGroupColorsToDb(); // bos zone listeleriyle bugunun kayitlari yazilir
 	}
+	// zscan/gzt/zgrp toggle'ini HER TICK'te dene (60 sn throttle YOK): grup adi
+	// sonradan ogrenilirse (ornek: bot acilip gruba girdikten sonra) bayrak kurulsun.
+	// g_zscanDbLoaded true olunca iceride tekrar denenmez (bir kez).
+	SyncZscanFromDb();
 	DWORD dwNow = GetTickCount();
 	if(dwNow - g_lastDbSyncTick < 60000) return;
 	g_lastDbSyncTick = dwNow;
-	SyncZscanFromDb(); // gruba gore kayitli ?zscan durumunu bir kez yukle
 	SyncPlayerCacheToDb();
 	SyncGroupColorsToDb();
 	SyncBotStatusToDb();
@@ -1012,7 +1272,7 @@ static void BindZoneGroup(int iZone, const char *szName)
 	if(!szBuf[0]) return;
 
 	// zone -> sahip isim (renk bagimsiz eslesme). Dikkat: bu, /gstats "ilk zone"
-	// eslemesinden gelir — GUVENILMEZ olabiliyor (yanlis gruba yaziyordu: #26'ya Kosmk).
+	// eslemesinden gelir - GUVENILMEZ olabiliyor (yanlis gruba yaziyordu: #26'ya Kosmk).
 	// Sahibi /gzinfo taramasiyla zaten dogru ogrenildiyse (doluysa) EZME; bos ise fallback yaz.
 	if(iZone >= 0 && iZone < MAX_GANG_ZONES && g_zoneOwnerName[iZone][0] == 0)
 		strncpy_s(g_zoneOwnerName[iZone], sizeof(g_zoneOwnerName[0]), szBuf, sizeof(g_zoneOwnerName[0]) - 1);
@@ -1097,7 +1357,7 @@ static double NumberAfter(const char *pText, const char *szKey)
 // ?zf: flashing zone'lari grup tag'larina gore sayip gruba bildirir (YS bot gibi).
 // Cikti TEK mesajdir (SA-MP 128 karakter siniri): en buyuk gruplar once, tasarsa
 // kesilir. Bilinmeyen grup rengi goruldugunde kendi flash taramamiz (/gzinfo)
-// baslatilir — YS botu gibi yeni gruplari kendi kendine ogrenir.
+// baslatilir - YS botu gibi yeni gruplari kendi kendine ogrenir.
 
 // ?zf sonrasi: bilinmeyen renkli flashing zone'lar icin tarama baslatildiysa
 // tarama bittiginde guncel ozet TEKRAR gonderilir (artik renkler biliniyor).
@@ -1176,7 +1436,7 @@ void BuildFlashZoneSummary()
 		if(agg[a].gi < 0) bUnknown = true; // -1: hicbir gruba eslesmeyen renk
 	}
 
-	// YS botu gibi: "Flashing Zones: Tag(n) | ..." — etiketler once toplanir;
+	// YS botu gibi: "Flashing Zones: Tag(n) | ..." - etiketler once toplanir;
 	// uzunluga gore Tek veya [1/2]+[2/2] iki mesaj.
 	FlashZoneItem items[256];
 	int nItems = 0;
@@ -1195,13 +1455,16 @@ void BuildFlashZoneSummary()
 			pszLabel = g_groupColors[idx].szName;  // tag yoksa tam ad
 		else
 			pszLabel = "capturing";              // bilinmeyen: tarama sonrasi etiket ogrenilir
-		strncpy_s(items[nItems].szLabel, sizeof(items[0].szLabel), pszLabel, sizeof(items[0].szLabel) - 1);
+		char szLabelClean[64] = {0};
+		strncpy_s(szLabelClean, sizeof(szLabelClean), pszLabel, sizeof(szLabelClean)-1);
+		StripColorCodes(szLabelClean); // {RRGGBB} / <RRGGBB> renk kodlarini temizle
+		strncpy_s(items[nItems].szLabel, sizeof(items[0].szLabel), szLabelClean, sizeof(items[0].szLabel) - 1);
 		items[nItems].n = agg[a].n;
 		nItems++;
 	}
 
-	// nItems==0: gorunur bolgede bilinen grup yok — BOŞ mesaj atma (boş "Flashing
-	// Zones: " gruba gidip "mesaj atmıyor" hissi verir). Bilinmeyen renk varsa
+	// nItems==0: gorunur bolgede bilinen grup yok - BO-S mesaj atma (bo-s "Flashing
+	// Zones: " gruba gidip "mesaj atm-▒yor" hissi verir). Bilinmeyen renk varsa
 	// tarama baslat (yalnizca flashing zonelere gider); ogrenilince tekrar ozet atilir.
 	if(nItems == 0)
 	{
@@ -1261,7 +1524,7 @@ static void GangZoneScanGzDialog(const char *szInfo)
 
 	char szOwner[80] = {0};
 	const char *pOwn = strstr(szInfo, "owned by group");
-	// Not: sahip adi renk bilinse de ayrismali — bilinen kisa etiket (GeMs gibi)
+	// Not: sahip adi renk bilinse de ayrismali - bilinen kisa etiket (GeMs gibi)
 	// buradan tam isme (The Youngsters Family gibi) yukseltilir.
 	if(pOwn)
 	{
@@ -1316,11 +1579,17 @@ static void GangZoneScanNext()
 		Log("[ZF:SCAN] Tarama tamam (%d grup haritada).", g_groupColorCount);
 
 		// Serbest zone listesi: sahibi bilinmeyen veya "Free" isaretli olanlar
-		// (renk kullanilmaz — eslesme tamamen isim bazli).
-		char szFree[512]; int nF = 0;
-		for(int zid = 0; zid < g_zoneCount; zid++)
-			if(g_zoneOwnerName[zid][0] == 0 || !_stricmp(g_zoneOwnerName[zid], "Free"))
-				nF += sprintf_s(szFree + nF, sizeof(szFree) - nF, " #%d", zid);
+		// (renk kullanilmaz - eslesme tamamen isim bazli).
+		char szFree[2048]; int nF = 0;
+		for(int zid = 0; zid < g_zoneCount; zid++){
+			if(g_zoneOwnerName[zid][0] == 0 || !_stricmp(g_zoneOwnerName[zid], "Free")){
+				int r = sprintf_s(szFree + nF, sizeof(szFree) - nF, " #%d", zid);
+				if(r < 0) break;
+				nF += r;
+				if(nF >= (int)sizeof(szFree)-16) break;
+			}
+		}
+		szFree[nF < (int)sizeof(szFree) ? nF : (int)sizeof(szFree)-1] = 0;
 		Log("[ZF:SCAN] Serbest zone'lar:%s", nF > 0 ? szFree : " (yok)");
 
 		// ?zf bilinmeyen renkler icin tarama baslatmissa: guncel ozeti tekrar gonder
@@ -1363,23 +1632,31 @@ static void GangZoneScanGo(int iZone)
 	float fCenterY = (g_zoneMinY[iZone] + g_zoneMaxY[iZone]) / 2.0f;
 	char szCmd[128];
 	sprintf_s(szCmd, sizeof(szCmd), "/pos %.2f %.2f %.2f", fCenterX, fCenterY, ZGO_TELEPORT_Z);
-	// 1. faz: teleport. Sunucu konumu işleyene kadar /gzinfo GÖNDERİLMEZ —
+	// 1. faz: teleport. Sunucu konumu i-sleyene kadar /gzinfo G-ûNDER-░LMEZ -
 	// ayni anda giderse cevap eski konumun zone'unu dondurur (stale zinciri).
 	g_zoneScanWaitingTeleport = true;
 	g_zoneScanDeadline = GetTickCount() + ZONE_SCAN_TELEPORT_SYNC_MS;
-	Log("[ZF:SCAN] Ornek zone #%d taranıyor -> /pos (%s)", iZone, szCmd);
+	Log("[ZF:SCAN] Ornek zone #%d taraniyor -> /pos (%s)", iZone, szCmd);
 	sendServerCommand(szCmd);
 }
 
 void StartZoneScan(bool bAuto)
 {
-	if(g_zoneScanIdx >= 0 || !iSpawned || g_inZoneWar) return;
+	if(g_zoneScanIdx >= 0 || !iSpawned || g_inZoneWar)
+	{
+		Log("[ZF:SCAN] StartZoneScan atlandi (scanAktif=%d spawned=%d war=%d).",
+			g_zoneScanIdx >= 0, iSpawned, g_inZoneWar);
+		return;
+	}
 
 	// Tarama dengesi (kullanici): bilinen zone'lari HER turda yeniden taramak
 	// bosu bosuna vakit kaybi; hic taramamak da veriyi bozar. Cozum:
 	// Normal tur  -> YALNIZCA sahibi bilinmeyen flashing zone'lar.
 	// Her 4. tur  -> TAM KONTROL: bilinenler de yeniden dogrulanir (bayat veri).
-	static int s_iScanPass = 0;
+	// ILK GIRIS: s_iScanPass=1'den baslar -> ilk tur bilinmeyen-only (DB'de var
+	// olanlar atlanir, sadece eksikler ogrenilir). Yarinki giris gun degisince
+	// LoadGroupsFromDb bos donecek, tum zone'lar "bilinmeyen" sayilip taraniacak.
+	static int s_iScanPass = 1;
 	bool bFullVerify = (s_iScanPass % 4 == 0);
 	s_iScanPass++;
 
@@ -1412,11 +1689,11 @@ void StartZoneScan(bool bAuto)
 
 	g_zoneScanIdx = 0;
 	g_zoneScanLastRun = GetTickCount(); // oto aralikli tarama icin son baslatma anii
-	Log("[ZF:SCAN] %d zone taraması basliyor (%s).", g_zoneScanQ, bAuto ? "oto" : "manuel ?zscan");
+	Log("[ZF:SCAN] %d zone taramas-▒ basliyor (%s).", g_zoneScanQ, bAuto ? "oto" : "manuel ?zscan");
 	GangZoneScanGo(g_zoneScanQueue[0]);
 }
 
-// ?zf: mevcut flashing zone'lardan sahibi BILINMEYEN olanlari tek tek ornek seçip
+// ?zf: mevcut flashing zone'lardan sahibi BILINMEYEN olanlari tek tek ornek se-gip
 // teleport + /gzinfo ile ogrenir (YS botu yerine kendi taramamiz). Tarama bitince
 // GangZoneScanNext guncel ozeti tekrar gonderir.
 static void StartFlashScan()
@@ -1453,7 +1730,7 @@ static void StartFlashScan()
 void ProcessZoneScan()
 {
 	// ?zgrp harvest kilidi cozum: /gstats sonucu gelmezse SAMPRPC g_waitingForGStats'i
-	// sifirlar (yalnizca dialog geldiginde kontrol eder — hic dialog gelmezse flag ACIK
+	// sifirlar (yalnizca dialog geldiginde kontrol eder - hic dialog gelmezse flag ACIK
 	// kalir) ama g_ghpWaitingGstats true kalir -> zincir takilir. Mutlak zaman asimi:
 	// istekten 50 sn gectiyse beklemeyi birak. Dialog cevabi sunucuda gecikebiliyor;
 	// ayni komutu tekrar gonderince spam/mute riski artar, SADECE bir kez tekrar dener.
@@ -1493,27 +1770,50 @@ void ProcessZoneScan()
 	if(g_zoneScanIdx < 0)
 	{
 		// Otomatik ?zgrp: g_zgrpAuto acikken TEK SEferlik calisir (spawn sonrasi
-		// ilk tur). Periyodik DEGIL: harvest bitince g_zgrpAuto otomatik kapanir
-		// (kullanici: "?zgrp on 1 kere yapsin, sonra off'a dussun"). Zincir surerken
-		// teleportlu tarama BASLAMAZ; harvest bitince (?zscan on ise) tarama baslar.
+		// ilk tur). Periyodik DEGIL: harvest bitince g_zgrpAuto otomatik kapanir.
+		// SADECE eksik tag olan grup varsa baslar: restore sonrasi g_groupColors
+		// dolu ama tag'i bos/placeholder (tag==isim) olan grup varsa harvest ile
+		// kisa tag cekilir. Tum tagler tamamsa GEREKSIZ /groups+ /gstats spam'i
+		// atilmaz (kullanici istegi).
 		DWORD dwNow3 = GetTickCount();
-		if(g_zgrpAuto && iSpawned && !g_ghpActive && !g_inZoneWar && !g_zgoActive
-			&& g_ghpLastRun == 0)
+		bool bNeedHarvest = false;
+		// GRUP ADI GATE: harvest yalnizca kendi grup adi ogrenildikten SONRA baslar
+		// (ogrenme 1 kereliktir, /stats -> Group butonu; harvest /gstats diyaloglari
+		// ogrenme faziyla ayni basligi tasir, cakisirlardi).
+		if(g_zgrpAuto && s_bGroupDbRestored && g_ghpLastRun == 0 && iSpawned && !g_myGroupName.empty())
+		{
+			// Eksik tag tespiti: tag bos veya placeholder (tag == isim) olan grup
+			for(int gi = 0; gi < g_groupColorCount; gi++)
+			{
+				if(!g_groupColors[gi].szName[0]) continue;
+				if(!g_groupColors[gi].szTag[0]
+					|| _stricmp(g_groupColors[gi].szTag, g_groupColors[gi].szName) == 0)
+				{ bNeedHarvest = true; break; }
+			}
+		}
+		if(bNeedHarvest && !g_ghpActive && !g_inZoneWar && !g_zgoActive)
 		{
 			g_ghpLastRun = dwNow3;
 			g_ghpLearnedCount = 0;
-			Log("[GHP] Otomatik tag harvest basliyor (/groups, tek seferlik)%s.",
-				g_zscanAuto ? " — bitince zone taramasi gelecek" : "");
+			Log("[GHP] Eksik tag'li grup var, otomatik harvest basliyor (/groups, tek seferlik)%s.",
+				g_zscanAuto ? " - bitince zone taramasi gelecek" : "");
 			g_waitingForGroups = true;
 			g_groupsReqTime = GetTickCount();
 			sendServerCommand((char *)"/groups");
 		}
 		// ?zscan on ise otomatik aralikli tarama: spawn'dan sonra ve ZONE_SCAN_PERIOD_MS
-		// aralikla tüm zone'lar taranir (?zscan off ile kapanir). Tarama 25+ dk surebilir,
+		// aralikla zone'lar taranir (?zscan off ile kapanir). Tarama 25+ dk surebilir,
 		// bu yuzden periyod genis tutulur; savas/zgo/harvest sirasinda bekler.
-		else if(g_zscanAuto && iSpawned && !g_ghpActive && !g_inZoneWar && !g_zgoActive)
+		// DB RESTORE ONCE: restore tamamlanmadan tarama baslamaz (yoksa var olan
+		// zone verisi "bilinmiyor" sanilip yeniden taraniyordu).
+		// GRUP ADI GATE: tarama da kendi grup adi ogrenilmeden baslamaz (ogrenme
+		// onceliklidir, sonra harvest/zscan devam eder).
+		// HARVEST SONRASI OTOMATIK: harvest bitti, yeni veri varsa zone scan tetikle (zscan off olsa bile).
+		else if(s_bGroupDbRestored && !g_myGroupName.empty() && iSpawned && !g_ghpActive && !g_inZoneWar && !g_zgoActive && (g_zscanAuto || g_forceZscanAfterHarvest))
 		{
-			if(g_zoneScanLastRun == 0 || dwNow3 - g_zoneScanLastRun >= ZONE_SCAN_PERIOD_MS)
+			bool bForce = g_forceZscanAfterHarvest;
+			g_forceZscanAfterHarvest = false;
+			if(bForce || g_zoneScanLastRun == 0 || dwNow3 - g_zoneScanLastRun >= ZONE_SCAN_PERIOD_MS)
 			{
 				StartZoneScan(true);
 			}
@@ -1569,7 +1869,7 @@ void ServerJoin(RPCParameters *rpcParams)
 	strcpy((char *)playerInfo[playerId].szPlayerName, szPlayerName);
 
 	// Zone war aktifken GRUP UYESI bir oyuncu baglanirsa gruba gz2 bildirimi at.
-	// (g_knownGroupMembers: kendi grubumuzun sohbetinde gorulen uyeler — botun grubu.
+	// (g_knownGroupMembers: kendi grubumuzun sohbetinde gorulen uyeler - botun grubu.
 	//  Oyunun TUM oyuncularina degil, sadece kendi grubuna bildirilir.)
 	if(g_inZoneWar && playerId != g_myPlayerID && g_knownGroupMembers[playerId] && !g_zwWelcomed[playerId])
 	{
@@ -1696,6 +1996,14 @@ void InitGame(RPCParameters *rpcParams)
 	}
 
 	iGameInited = 1;
+	// UIF Login: baglanti sonrasi spawn istegi GONDERILMEZ (tmp hesap onlemi).
+	// Login dialogu gelir (g_loginPending=true) -> kullanici sifreyle girer ->
+	// "You logged in" mesaji gelince false olur, spawn/akis baslar.
+	// Login dialogu HIC gelmezse (sunucu tmp'e zorluyorsa) 10 sn sonra otomatik
+	// devam et (takilip sonsuza dek bekleme).
+	g_loginPending = true;
+	g_loginPendingUntil = GetTickCount() + 10000;
+	Log("[LOGIN] Baglanti tamam, login bekleniyor (tmp hesap onleniyor)...");
 }
 
 void WorldPlayerAdd(RPCParameters *rpcParams)
@@ -1865,9 +2173,9 @@ void ConnectionRejected(RPCParameters *rpcParams)
 		Log("ConnectionRejected: unknown");
 }
 
-// Savaş başlangıcında kısa GZ girişi: kendi takım rengimizi öğrenmek için /gz2,
-// birkaç saniye içeride kal (skorboard textdraw'larında kendi adımızın rengi = takım rengi),
-// sonra /fr ile freeroam'a geri dön. /pos bu modda çalışmaz; çıkış /fr ile yapılır.
+// Sava-s ba-slang-▒c-▒nda k-▒sa GZ giri-si: kendi tak-▒m rengimizi --srenmek i-gin /gz2,
+// birka-g saniye i-geride kal (skorboard textdraw'lar-▒nda kendi ad-▒m-▒z-▒n rengi = tak-▒m rengi),
+// sonra /fr ile freeroam'a geri d-n. /pos bu modda -gal-▒-smaz; -g-▒k-▒-s /fr ile yap-▒l-▒r.
 static void ZwJoinCaptureReturn()
 {
 	g_zwReturnPending = true;
@@ -1950,7 +2258,7 @@ void ClientMessage(RPCParameters *rpcParams)
 	// (oyun RPC'sinden gelen isim guvenilmez; bot baskalari tarafindan da kullanilacak).
 	{
 		// YS.Hold'un periyodik "Time left: MM:SS" duyurusu: timer textdraw'ina
-		// bagimli olmadan kalan sureyi verir (GZ'de olmaya gerek yok — grup chat'i).
+		// bagimli olmadan kalan sureyi verir (GZ'de olmaya gerek yok - grup chat'i).
 		// Textdraw gelmedigi zamanlarda (restart sonrasi) savas suresini bilmek icin
 		// tek guvenilir kaynak. CaptureWarTimer ile ayni parse mantigi.
 		const char *pTimeLeft = strstr(szNonColorEmbeddedMsg, "Time left:");
@@ -1966,7 +2274,7 @@ void ClientMessage(RPCParameters *rpcParams)
 				g_warRemainingSec = iM * 60 + iS;
 				g_warTimerTick = GetTickCount();
 				// Chat kaynagi (uL.Hold tum savaslarin suresini yazar): ?gzt time
-				// gostergesi icin tutulur ama GERI SAYIM BUNA GORE ATILMAZ —
+				// gostergesi icin tutulur ama GERI SAYIM BUNA GORE ATILMAZ -
 				// bizim savasimiz degilse phantom duyurular cikiyordu.
 				g_warTimerViaTdw = false;
 				if(g_warRemainingSec > 0)
@@ -1991,7 +2299,7 @@ void ClientMessage(RPCParameters *rpcParams)
 		if(bJoinNotice)
 		{
 			// Duyurunun zone'sunu cikar: "Zone: '# 146'." -> "146"
-			// Canli format "Zone: '# 157'" — tırnak sonrasi boşluk olabilir, atla.
+			// Canli format "Zone: '# 157'" - t-▒rnak sonrasi bo-sluk olabilir, atla.
 			char szZoneTag[16] = {0};
 			const char *pZ = strstr(pZoneMsg, "Zone: '#");
 			if(pZ)
@@ -2004,14 +2312,14 @@ void ClientMessage(RPCParameters *rpcParams)
 			}
 			// Ayni savasin tekrar eden duyurusu: yoksay. (Yoksa g_zoneWarStartTick her
 			// tekrarda sifirlanir ve ?gzt kalan sureyi yanlis hesaplar.) Savas zaten
-			// aktifse gelen her yeni join duyurusu tekrar sayilir; zone tag'i uyuşmuyorsa
+			// aktifse gelen her yeni join duyurusu tekrar sayilir; zone tag'i uyu-smuyorsa
 			// (bos tag dahil) da ayni savasin devami kabul edilir.
 			if(g_inZoneWar && g_zoneWarStartTick != 0
 				&& (!szZoneTag[0] || !strcmp(g_zwWarZone, szZoneTag)))
 			{
 				// Tekrar duyurusu. Bot yeniden basladiysa / oturum ortasinda savasa
 				// denk geldiyse timer hic cekilmemis olabilir (g_warRemainingSec<0):
-				// o zaman kisa GZ giris yapip timer'ı + takim rengini yeniden ogren.
+				// o zaman kisa GZ giris yapip timer'-▒ + takim rengini yeniden ogren.
 				if(g_warRemainingSec < 0 && !g_zwReturnPending)
 				{
 					g_warTimerTick = 0;
@@ -2103,7 +2411,7 @@ void ClientMessage(RPCParameters *rpcParams)
 		// --- Zone sahipligi ogrenimi (SADECE isim bazli; RENK KULLANILMAZ) ---
 		// "ZONE WAR: X takes over zone '# N'"  -> X o zone'un YENI sahibi: direkt bagla.
 		// "ZONE WAR: X keeps zone '# N'"       -> X mevcut sahibi: direkt bagla.
-		// (Eski akis takes-over'da RPC 108 RENK guncellemesi bekliyordu — renkle
+		// (Eski akis takes-over'da RPC 108 RENK guncellemesi bekliyordu - renkle
 		// isimiz yok; sunucu mesajinin kendisi yeterli ve aninda ogrenir.)
 		{
 			const char *pTakes = strstr(pZoneMsg, "takes over zone '#");
@@ -2167,12 +2475,9 @@ void ClientMessage(RPCParameters *rpcParams)
 
 		// Kendi grubumuzun adini biliyorsak, mesajda o ad gecmiyorsa yoksay.
 		// Grup adi henuz ogrenilmediyse (bos) hicbir zone mesaji yakalanmaz;
-		// sadece /gz2 join bildirimi yakalanir (kendi grubumuzun uyelerine ozel).
-		// /gz2 bildirimi kendi grubumuzun uyelerine ozel gonderildigi icin filtre uygulanmaz.
-		// wins/loses da filtreden MUAFlardir: savas bitisi grup adindan bagimsiz
-		// islenmeli (kill-list yakalayici + sure olcumu + ?gzt reset).
-		if(pAction && !bJoinNotice
-			&& strcmp(pAction, "wins") != 0 && strcmp(pAction, "loses") != 0)
+		// Kullanici: wins/loses her grup icin tetiklenirse botun savasi karisir.
+		// Sadece botun grubunun adi mesaja dahilse isle (takes over dahil).
+		if(pAction && !bJoinNotice)
 		{
 			if(g_myGroupName.empty() || strstr(pZoneMsg, g_myGroupName.c_str()) == NULL)
 				pAction = NULL;
@@ -2205,7 +2510,7 @@ void ClientMessage(RPCParameters *rpcParams)
 					if(g_zwCapturingKillList && !g_zwKillListSent)
 					{
 						// Bitis textdraw'larini bekle; g_zwReturnPending true kalir,
-						// finalize sonrasi dönüs (ProcessZoneWarAutoJoin) /fr gonderir.
+						// finalize sonrasi d-n-╝s (ProcessZoneWarAutoJoin) /fr gonderir.
 						g_zwFinalizeAt = GetTickCount() + 3000;
 						Log("[KILLLIST] Savas bitti (%s), GZ'de kalinip sonuc textdraw'lari bekleniyor...", pAction);
 					}
@@ -2224,7 +2529,7 @@ void ClientMessage(RPCParameters *rpcParams)
 					}
 					Log("[ZONEWAR] Savas bitti (%s), sure sayaci sifirlandi.", pAction);
 
-					// Kayip bildirimi: "X wins against Y" — Y bizim grubumuzsa kaybettik.
+					// Kayip bildirimi: "X wins against Y" - Y bizim grubumuzsa kaybettik.
 					// "X loses to Y" / "X loses against Y" formatinda da calisir: rakip
 					// tarafinda (kaybeden degil) olan taraf biziz demektir.
 					if(!g_myGroupName.empty())
@@ -2260,63 +2565,93 @@ void ClientMessage(RPCParameters *rpcParams)
 	// --- Welcome back dedektoru: "GROUP: X logged in" ---
 	// Oyun ici gruplarda "X logged in" mesaji gelince Discord welcome kanalina bildir.
 	{
-		const char *pLogged = strstr(szNonColorEmbeddedMsg, "logged in");
-		if(pLogged && (pLogged == szNonColorEmbeddedMsg || pLogged[-1] == ' '))
+		// Sistemsel ">> You logged in to your account": sunucu oturumu hatirliyor
+		// (kullanici daha once girmis). Login beklemeyi KALDIRMAZ — sunucuya login
+		// islemini bitirmesi icin 3 sn verilir; ancak ondan SONRA spawn akisi serbest.
+		// (Not: bu mesaj tmp hesapta da geliyor; tek basina gercek login degildir.)
+		if(strstr(szNonColorEmbeddedMsg, "You logged in to your account") && g_loginPending)
 		{
-			// Isim cikar: "(GROUP) [12] isim(id): X logged in" -> "X"
-			const char *pColon = NULL;
-			const char *pOpenParen = NULL;
-			for(const char *q = szNonColorEmbeddedMsg; *q; q++)
+			// Sunucu login'i islesin: 3 sn sonra akis devam etsin.
+			if(g_loginPendingUntil == 0)
+				g_loginPendingUntil = GetTickCount() + 3000;
+			Log("[LOGIN] 'You logged in' mesaji alindi, 3 sn sonra akis devam edecek.");
+		}
+		const char *pLogged = strstr(szNonColorEmbeddedMsg, "logged in");
+		// Sistemsel ">> You logged in to your account" mesaji greet TETIKLEMEZ:
+		// yalnizca "GROUP: X(id) logged in" formatli grup uyesi girisleri.
+		if(pLogged && (pLogged == szNonColorEmbeddedMsg || pLogged[-1] == ' ')
+			&& strncmp(szNonColorEmbeddedMsg, "GROUP:", 6) == 0)
+		{
+			// Isim cikar: gercek format "GROUP: X(id) logged in - Ominous" -> isim
+			// ':' sonrasi, '(' oncesi (eski format varsayimi yanlisti, greet hic
+			// tetiklenmiyordu).
+			const char *pColon = strchr(szNonColorEmbeddedMsg, ':');
+			const char *pName = pColon ? pColon + 1 : szNonColorEmbeddedMsg;
+			while(*pName == ' ' || *pName == '\t') pName++;
+			const char *pOpen = strchr(pName, '(');
+			size_t nLen = pOpen ? (size_t)(pOpen - pName) : strlen(pName);
+			char szName[64] = {0};
+			if(nLen > 0 && nLen < 64)
 			{
-				if(*q == ':') pColon = q;
-				if(*q == '(') pOpenParen = q;
+				memcpy(szName, pName, nLen); szName[nLen] = 0;
+				// Sondaki boslugu kirp
+				while(nLen > 0 && szName[nLen-1] == ' ') szName[--nLen] = 0;
 			}
-			if(pColon && pOpenParen && pColon > pOpenParen)
+
+			if(szName[0] && strcmp(szName, g_szNickName) != 0)
 			{
-				const char *pName = pColon + 1;
-				while(*pName == ' ') pName++;
-				char szName[64] = {0};
-				size_t n = 0;
-				while(pName[n] && pName[n] != ' ' && n < 63) { szName[n] = pName[n]; n++; }
-				szName[n] = 0;
+				Log("[WELCOME] Welcome back tespit edildi: %s", szName);
+				SendWelcomeBack(szName);
 
-				if(szName[0] && strcmp(szName, g_szNickName) != 0)
+				// OYUN ICINI otomatik greet (uL.Hold tarzi) - yalnizca ?greet ACIK ise.
+				if(!g_welcomeEnabled)
 				{
-					Log("[WELCOME] Welcome back tespit edildi: %s", szName);
-					SendWelcomeBack(szName);
-
-					// OYUN ICINI otomatik greet (uL.Hold tarzi):
+					Log("[WELCOME] Greet KAPALI, oyun ici mesaj atlanmadi (Discord da atlar).");
+				}
+				else
+				{
 					// - Savas varsa: " Welcome <isim>! We are in a ZONE WAR against <rakip>! Type /gz2 for backup!"
 					// - Ozel mesaj ayarliysa (?welcomemsg): o mesaj gonderilir
 					// - Bot dili TR ise: " Tekrar hos geldin <isim>!" / EN: " Welcome back <isim>!"
 					char szGreet[224];
 					if(g_inZoneWar)
+				{
+					// Rakip adi: once "X vs Y" duyurusundan (bizim olmayan taraf),
+					// yoksa WARGROUP RPC'sinden gelen enemy.
+					std::string strEnemy = g_enemyGroupName;
+					if(!g_zwWarTeamLeft.empty() && !g_zwWarTeamRight.empty())
 					{
-						// Rakip adi: once "X vs Y" duyurusundan (bizim olmayan taraf),
-						// yoksa WARGROUP RPC'sinden gelen enemy.
-						std::string strEnemy = g_enemyGroupName;
-						if(!g_zwWarTeamLeft.empty() && !g_zwWarTeamRight.empty())
-						{
-							bool bLeftOurs = (!g_myGroupName.empty()
-								&& _stricmp(g_zwWarTeamLeft.c_str(), g_myGroupName.c_str()) == 0);
-							const std::string &strPick = bLeftOurs ? g_zwWarTeamRight : g_zwWarTeamLeft;
-							if(!strPick.empty()) strEnemy = strPick;
-						}
-						if(strEnemy.empty())
-							sprintf_s(szGreet, sizeof(szGreet), LM(" Welcome %s! Grup savasindayiz! Yedek icin /gz2 yaz!", " Welcome %s! We are in a ZONE WAR! Type /gz2 for backup!"), szName);
-						else
-							sprintf_s(szGreet, sizeof(szGreet), " Welcome %s! We are in a ZONE WAR against %s! Type /gz2 for backup!", szName, strEnemy.c_str());
+						bool bLeftOurs = (!g_myGroupName.empty()
+							&& _stricmp(g_zwWarTeamLeft.c_str(), g_myGroupName.c_str()) == 0);
+						const std::string &strPick = bLeftOurs ? g_zwWarTeamRight : g_zwWarTeamLeft;
+						if(!strPick.empty()) strEnemy = strPick;
 					}
-					else if(!g_welcomeMessage.empty())
+					if(strEnemy.empty())
+						sprintf_s(szGreet, sizeof(szGreet), LM("!Welcome %s! Grup savasindayiz! Yedek icin /gz2 yaz!", "!Welcome %s! We are in a ZONE WAR! Type /gz2 for backup!"), szName);
+					else
+						sprintf_s(szGreet, sizeof(szGreet), "!Welcome %s! We are in a ZONE WAR against %s! Type /gz2 for backup!", szName, strEnemy.c_str());
+				}
+				else
+				{
+					std::string per = GetWelcomePerUser(szName);
+					if(!per.empty()){
+						if(strstr(per.c_str(), "%s")){
+							char tmp[224]; sprintf_s(tmp, sizeof(tmp), per.c_str(), szName);
+							sprintf_s(szGreet, sizeof(szGreet), "!%s", tmp);
+						} else {
+							sprintf_s(szGreet, sizeof(szGreet), "!%s", per.c_str());
+						}
+					} else if(!g_welcomeMessage.empty())
 					{
-						sprintf_s(szGreet, sizeof(szGreet), " %s", g_welcomeMessage.c_str());
+						sprintf_s(szGreet, sizeof(szGreet), "!%s", g_welcomeMessage.c_str());
 					}
 					else
 					{
-						sprintf_s(szGreet, sizeof(szGreet), LM(" Tekrar hos geldin %s!", " Welcome back %s!"), szName);
+						sprintf_s(szGreet, sizeof(szGreet), LM("!Tekrar hos geldin %s!", " Welcome back %s!"), szName);
 					}
-					g_bridgeSuppressEcho++;
-					sendChat(szGreet);
+				}
+g_bridgeSuppressEcho++;
+				sendChat(szGreet);
 				}
 			}
 		}
@@ -2352,6 +2687,7 @@ void ClientMessage(RPCParameters *rpcParams)
 					char szGrpName[64] = {0};
 					memcpy(szGrpName, pNameStart, nLen);
 					szGrpName[nLen] = 0;
+					StripColorCodes(szGrpName); // renk kodlarini temizle ({RRGGBB} / <RRGGBB>)
 					if(szGrpName[0])
 					{
 						playerInfo[iSenderId].iIsConnected = 1;
@@ -2448,6 +2784,11 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 						if(playerInfo[iPid].szPlayerName[0]) pName = playerInfo[iPid].szPlayerName;
 						else if(g_playerCache[iPid].szName[0]) pName = g_playerCache[iPid].szName;
 						else { sprintf_s(szFallbackName, sizeof(szFallbackName), "Player %d", iPid); pName = szFallbackName; }
+						// Isimde renk kodu varsa temizle (playerInfo/player_cache ham gelebilir)
+						char szCleanName[64] = {0};
+						strncpy_s(szCleanName, sizeof(szCleanName), pName, sizeof(szCleanName)-1);
+						StripColorCodes(szCleanName);
+						pName = szCleanName;
 						char szFps[16], szPing[16];
 						if(g_playerCache[iPid].iFps >= 0) sprintf_s(szFps, sizeof(szFps), "%d", g_playerCache[iPid].iFps); else strcpy(szFps, "--");
 						if(g_playerCache[iPid].iPing >= 0) sprintf_s(szPing, sizeof(szPing), "%d", g_playerCache[iPid].iPing); else strcpy(szPing, "--");
@@ -2674,22 +3015,68 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				Log("[WELCOME] ?greet yakalandi (arg='%s').", pArg);
 				ToggleWelcomeBackEx(iForce);
 			}
-			// --- ?welcomemsg <mesaj> : kisiye ozel welcome mesaji ayarla ---
+			// --- ?welcomemsg [isim] <mesaj> : kisi bazli (B) veya global welcome ayarla ---
+			// B secenegi: ?welcomemsg cb650r Hosgeldin kral!  -> sadece cb650r icin
+			//             ?welcomemsg list                 -> per-user listesi
+			//             ?welcomemsg <mesaj>              -> global (herkes icin)
 			else if(!strncmp(pGroupMsg, "?welcomemsg", 11) && (pGroupMsg[11] == '\0' || pGroupMsg[11] == ' '))
 			{
 				const char *pArg = pGroupMsg + 11;
 				while(*pArg == ' ') pArg++;
 				if(*pArg == '\0')
 				{
-					Log("[WELCOME] ?welcomemsg icin mesaj bos, ayar siliniyor.");
+					Log("[WELCOME] ?welcomemsg bos, global siliniyor.");
 					SetWelcomeMessage("");
+				}
+				else if(!_stricmp(pArg, "list"))
+				{
+					// Per-user listesini Discord'a goster (log + chat)
+					try{
+						httplib::Client cli(g_szBackendBase);
+						cli.set_connection_timeout(3);
+						std::string url = "/api/welcome/peruser/list?hwid=" + g_myHWID;
+						auto res = cli.Get(url.c_str());
+						if(res && res->status==200){
+							auto j=json::parse(res->body);
+							auto list=j.value("list", json::array());
+							if(list.empty()){
+								g_bridgeSuppressEcho++; sendChat((char*)"!Per-user welcome yok.");
+							} else {
+								std::string out="!Per-user: ";
+								for(auto &e: list){
+									std::string t=e.value("target_name",""), m=e.value("custom_message","");
+									out += t + "->" + m.substr(0,20) + " | ";
+									if(out.size()>100) break;
+								}
+								g_bridgeSuppressEcho++; sendChat((char*)out.c_str());
+							}
+						}
+					}catch(...){}
 				}
 				else
 				{
-					char szMsg[256] = {0};
-					strncpy_s(szMsg, sizeof(szMsg) - 1, pArg, sizeof(szMsg) - 1);
-					Log("[WELCOME] ?welcomemsg ayarlaniyor: %s", szMsg);
-					SetWelcomeMessage(szMsg);
+					// Per-user self: gonderen kisi kendi adina mesaj ayarlar
+					// Ornek: cb650r ?welcomemsg test -> cb650r icin "test" kaydedilir
+					char senderName[64]={0};
+				if(iSenderId >=0 && iSenderId < MAX_PLAYERS && playerInfo[iSenderId].szPlayerName[0])
+					strncpy_s(senderName, sizeof(senderName), playerInfo[iSenderId].szPlayerName, sizeof(senderName)-1);
+				else if(iSenderId >=0 && iSenderId < MAX_PLAYERS && g_playerCache[iSenderId].szName[0])
+					strncpy_s(senderName, sizeof(senderName), g_playerCache[iSenderId].szName, sizeof(senderName)-1);
+				if(!senderName[0]){
+						// Fallback global (eski davranis)
+						char szMsg[256] = {0};
+						strncpy_s(szMsg, sizeof(szMsg) - 1, pArg, sizeof(szMsg) - 1);
+						Log("[WELCOME] Global welcomemsg ayarlaniyor: %s", szMsg);
+						SetWelcomeMessage(szMsg);
+					} else if(!_stricmp(pArg, "clear")){
+						Log("[WELCOME] Per-user %s siliniyor", senderName);
+						SetWelcomePerUser(senderName, "");
+						g_bridgeSuppressEcho++; char tmp[128]; sprintf_s(tmp,"!Per-user %s silindi.", senderName); sendChat(tmp);
+					} else {
+						Log("[WELCOME] Per-user %s (self) -> %s", senderName, pArg);
+						SetWelcomePerUser(senderName, pArg);
+						g_bridgeSuppressEcho++; char tmp[128]; sprintf_s(tmp,"!Per-user %s ayarlandi.", senderName); sendChat(tmp);
+					}
 				}
 			}
 			// --- ?gm <mesaj> : ?welcomemsg alias (E1 uyumlu) ---
@@ -2710,7 +3097,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					SetWelcomeMessage(szMsg);
 				}
 			}
-			// --- ?gzt : zone war timer — on/off + kalan sureyi gruba bildir ---
+			// --- ?gzt : zone war timer - on/off + kalan sureyi gruba bildir ---
 			else if(!strncmp(pGroupMsg, "?gzt", 4) && (pGroupMsg[4] == '\0' || pGroupMsg[4] == ' '))
 			{
 				// ?gzt on / ?gzt off: geri sayim duyurularini ac/kapat (YS botu gibi)
@@ -2735,7 +3122,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					return;
 				}
 
-				// ?gzt time: su anki savas suresini goster — cooldown yok.
+				// ?gzt time: su anki savas suresini goster - cooldown yok.
 				if(_stricmp(pArg, "time") != 0 && pArg[0])
 				{
 					Log("[GZT] Bilinmeyen arguman: '%s' (on/off/time).", pArg);
@@ -2869,13 +3256,29 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				Log("[ALOG] ?alog yakalandi, DB sorgusu baslatiliyor.");
 				QueryAdminLogSummary(pGroupMsg + 5);
 			}
-			// --- ?grole <id> <rol> : grup uye rolunu ayarla (sunucuya ilet) ---
-			else if(!strncmp(pGroupMsg, "?grole", 6) && (pGroupMsg[6] == ' ' || pGroupMsg[6] != '\0'))
+			// --- ?gname : kendi grup adini YENIDEN ogren (1 kerelik /stats -> Group
+			// butonu akisi; ogrenileni DB'ye yazar). Grup degistiginde kullanilir. ---
+			else if(!strncmp(pGroupMsg, "?gname", 6) && (pGroupMsg[6] == '\0' || pGroupMsg[6] == ' '))
 			{
-				Log("[GROLE] ?grole yakalandi.");
-				char szCmd[64];
-				sprintf_s(szCmd, sizeof(szCmd), "/grouprole %s", pGroupMsg + 6);
-				sendServerCommand(szCmd);
+				Log("[GNAME] ?gname yakalandi, grup adi yeniden ogreniliyor.");
+				g_bridgeSuppressEcho++;
+				sendChat((char *)LM("!Grup adi yeniden ogreniliyor...", "!Re-learning group name..."));
+				// Mevcut adi sifirla -> SyncZscanFromDb yeniden ogrenir (DB'de yoksa
+				// /stats akisi; varsa DB'den yuklenir). Zorla /stats icin DB de sifirlanir.
+				g_myGroupName.clear();
+				g_zscanDbLoaded = false;
+				g_waitingForGroupName = false;
+				g_groupNamePhase = 0;
+				// DB'deki eski adi da temizle ki /stats ile YENIDEN ogrensin
+				try
+				{
+					httplib::Client cli(g_szBackendBase);
+					cli.set_connection_timeout(3);
+					json body = {{"name", g_szNickName}, {"data", json::object()}, {"groupName", ""}};
+					cli.Post("/api/bot/status", body.dump(), "application/json");
+				}
+				catch(...) {}
+				g_bridgeSuppressEcho++;
 			}
 			// --- ?post <neden> : rol degisikligine gerekce ekle; sunucuya ilet + Discord'a embed ---
 			else if(!strncmp(pGroupMsg, "?post", 5) && (pGroupMsg[5] == ' ' || pGroupMsg[5] != '\0'))
@@ -2911,7 +3314,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					Log("[POST] Son rol degisikligi yok, Discord'a embed gonderilemedi.");
 			}
 			// --- ?tag <tag> <yeni> : grup zone tagini duzelt (sunucuya ilet) ---
-			// (?tagscan ayri komuttur: buraya takilmamasi icin hariç tutulur.)
+			// (?tagscan ayri komuttur: buraya takilmamasi icin hari-g tutulur.)
 			else if(!strncmp(pGroupMsg, "?tag", 4) && strncmp(pGroupMsg, "?tagscan", 8) != 0
 				&& (pGroupMsg[4] == ' ' || pGroupMsg[4] != '\0'))
 			{
@@ -2920,7 +3323,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				sprintf_s(szCmd, sizeof(szCmd), "/groupzonetag %s", pGroupMsg + 4);
 				sendServerCommand(szCmd);
 			}
-			// --- ?zlist / ?zwho : bulundugu zone bilgisi → /gzinfo (hangi grup, ne zaman bosalir) ---
+			// --- ?zlist / ?zwho : bulundugu zone bilgisi -åÆ /gzinfo (hangi grup, ne zaman bosalir) ---
 			else if((!strncmp(pGroupMsg, "?zlist", 6) && (pGroupMsg[6] == '\0' || pGroupMsg[6] == ' '))
 			     || (!strncmp(pGroupMsg, "?zwho", 5) && (pGroupMsg[5] == '\0' || pGroupMsg[5] == ' ')))
 			{
@@ -2936,22 +3339,19 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				if(!_stricmp(pArg, "on"))
 				{
 					g_zscanAuto = true;
-					SyncGroupColorsToDb();
-					SyncPlayerCacheToDb();
 					SyncBotStatusToDb(); // gruba gore DB'ye kaydet
-					// Takili/eski taramayi temizleyip her zaman yeniden baslat (aksi halde
-					// aktif tarama guard'i ?zscan on'i yok sayip "etmiyor" gorunuyordu).
-					g_zoneScanIdx = -1;
-					g_zoneScanQ = 0;
-					StartZoneScan(true);
+					// TARAMA ANINDA BASLATILMAZ: sadece bayrak acilir. Tarama ilk
+					// giris sonrasi + periyodik akista (ProcessZoneScan) baslar.
+					// Test icin surekli ac/kapa yapilinca her toggle'da tarama+DB push
+					// tetikleniyordu; bu hem DB'yi yoruyor hem var olan veriyi karistiriyordu.
 					g_bridgeSuppressEcho++;
 					if(g_inZoneWar)
-						// Savas sirasinda tarama bilinçli bekletilir (teleport = savas bugu);
-						// kullaniciya SÖYLE, sessiz no-op olmasin.
+						// Savas sirasinda tarama bilin-gli bekletilir (teleport = savas bugu);
+						// kullaniciya S-ûYLE, sessiz no-op olmasin.
 						sendChat((char *)LM("!Zone war aktif - tarama savas bitince otomatik baslayacak.",
-							"!Zone war active — scan will start automatically after the war."));
+							"!Zone war active - scan will start automatically after the war."));
 					else
-						sendChat((char *)LM("!Zone tarama: ACIK (aralikli).", "!Zone scan: ON (periodic)."));
+						sendChat((char *)LM("!Zone tarama: ACIK (periyodik).", "!Zone scan: ON (periodic)."));
 				}
 				else if(!_stricmp(pArg, "off"))
 				{
@@ -2985,6 +3385,20 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					iZone = atoi(pArg);
 				else
 					iZone = FindZoneByGroupTag(pArg);
+				if(iZone == -2)
+				{
+					// TAG CAKISMASI: bu tag birden fazla gruba ait (orn. dEV ->
+					// The Devils Organizations + The Devilz Dead Industries). Rastgele
+					// secim yanlis zone gonderir; tam ISIM ile netlestir.
+					Log("[ZGO] Tag '%s' birden fazla gruba ait, isimle netlestiriliyor.", pArg);
+					g_bridgeSuppressEcho++;
+					char szCol[160];
+					sprintf_s(szCol, sizeof(szCol),
+						LM("!'%s' tag'i birden fazla gruba ait - tam isim yaz (??zgo <tam isim>).",
+							"!'%s' tag belongs to multiple groups - use full name (??zgo <full name>)."), pArg);
+					sendChat(szCol);
+					return;
+				}
 				if(iZone >= 0 && iZone < g_zoneCount)
 				{
 					// Eski (spawn) pozisyonu kaydet
@@ -3023,7 +3437,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					g_bridgeSuppressEcho++;
 					char szMsg[160];
 					sprintf_s(szMsg, sizeof(szMsg),
-						LM("!%s icin zon taranıyor, ~30 sn sonra ?zgo %s tekrar dene.",
+						LM("!%s icin zon taraniyor, ~30 sn sonra ?zgo %s tekrar dene.",
 						   "!Scanning zones for %s, retry ?zgo %s in ~30 sec."), pArg, pArg);
 					sendChat(szMsg);
 				}
@@ -3034,7 +3448,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				Log("[ZONE] ?zgo (argumansiz), /gzinfo gonderiliyor.");
 				sendServerCommand((char *)"/gzinfo");
 			}
-			// --- ?za / ?zattack [<zoneid | gruptag>] : zone saldirisi — id veya tag ile
+			// --- ?za / ?zattack [<zoneid | gruptag>] : zone saldirisi - id veya tag ile
 // hedef zonu bulup gider, sonra /gz gonderir (bot co-leader/leader olmali; yetki sunucuda). ---
 			else if((!strncmp(pGroupMsg, "?za", 3) && (pGroupMsg[3] == '\0' || pGroupMsg[3] == ' '))
 			     || (!strncmp(pGroupMsg, "?zattack", 8) && (pGroupMsg[8] == '\0' || pGroupMsg[8] == ' ')))
@@ -3062,6 +3476,18 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 						iZone = atoi(pA); // kullanici belirli zone id'sine gitsin istedi
 					else
 						iZone = FindZoneByGroupTag(pA);
+					if(iZone == -2)
+					{
+						// TAG CAKISMASI: yanlis gruba saldiri riski - isimle netlestir.
+						Log("[ZONE] Tag '%s' birden fazla gruba ait, ?za iptal edildi.", pA);
+						g_bridgeSuppressEcho++;
+						char szCol[160];
+						sprintf_s(szCol, sizeof(szCol),
+							LM("!'%s' tag'i birden fazla gruba ait - tam isim yaz (??za <tam isim>).",
+								"!'%s' tag belongs to multiple groups - use full name (??za <full name>)."), pA);
+						sendChat(szCol);
+						return;
+					}
 					if(iZone >= 0 && iZone < g_zoneCount)
 					{
 						float fCenterX = (g_zoneMinX[iZone] + g_zoneMaxX[iZone]) / 2.0f;
@@ -3116,6 +3542,18 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					iZone = atoi(pArg);
 				else
 					iZone = FindZoneByGroupTag(pArg);
+				if(iZone == -2)
+				{
+					// TAG CAKISMASI: yanlis gruba sniper - isimle netlestir.
+					Log("[ZSNIP] Tag '%s' birden fazla gruba ait, sniper baslatilmadi.", pArg);
+					g_bridgeSuppressEcho++;
+					char szCol[160];
+					sprintf_s(szCol, sizeof(szCol),
+						LM("!'%s' tag'i birden fazla gruba ait - tam isim yaz (??zsnip <tam isim>).",
+							"!'%s' tag belongs to multiple groups - use full name (??zsnip <full name>)."), pArg);
+					sendChat(szCol);
+					return;
+				}
 				if(iZone < 0 || iZone >= g_zoneCount)
 				{
 					Log("[ZSNIP] %s icin zone bulunamadi, sniper baslatilmadi.", pArg);
@@ -3174,7 +3612,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					sendServerCommand((char *)"/groups");
 				}
 			}
-			// --- ?zf <#N> : zone durumu sorgula → /gzinfo + flashing zone dagilimi ---
+			// --- ?zf <#N> : zone durumu sorgula -åÆ /gzinfo + flashing zone dagilimi ---
 			else if(!strncmp(pGroupMsg, "?zf", 3) && (pGroupMsg[3] == '\0' || pGroupMsg[3] == ' '))
 			{
 				Log("[ZONE] ?zf yakalandi, mevcut flashing verisiyle aninda ozet gonderiliyor.");
@@ -3194,7 +3632,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				// /gstats spam'i komut mute riskini artiriyordu, onun yerine bilinmeyen
 				// renkli flashing zonlar ?zgrp ile (elle) cekilir.
 			}
-			// --- ?gz : zone war baslatma → Discord zonewar kanalina bildirim, 180 sn cooldown (RakGravy ile ayni) ---
+			// --- ?gz : zone war baslatma -åÆ Discord zonewar kanalina bildirim, 180 sn cooldown (RakGravy ile ayni) ---
 			else if(!strncmp(pGroupMsg, "?gz", 3) && (pGroupMsg[3] == '\0' || pGroupMsg[3] == ' '))
 			{
 				DWORD dwNow = GetTickCount();
@@ -3420,6 +3858,14 @@ void SpawnConfirmed(RPCParameters *rpcParams)
 {
 	if(!iGameInited) return;
 
+	// Login bekleniyor: kullanici sifre girip hesaba girene kadar /fr ve akislar
+	// bekletilir (tmp hesaba atilip gercek hesap kaybedilmesin).
+	if(g_loginPending)
+	{
+		Log("[LOGIN] Spawn onayi geldi ama login bekleniyor, /fr ertelendi (tmp hesap onleniyor).");
+		return;
+	}
+
 	iSpawned = 1;
 	bIsSpectating = 0;
 	g_zoneScanWaitStart = GetTickCount(); // oto-tarama sayaci: 30 sn sonra ilk tarama
@@ -3428,12 +3874,14 @@ void SpawnConfirmed(RPCParameters *rpcParams)
 	{
 		g_frSentOnce = true;
 		Log("[SPAWN] Sunucu spawn onayi (RPC_Spawn) alindi, /fr (freeroam) gonderiliyor.");
+		// OYUNCU ADI KONTROL: tmp hesapta mi degil mi — kesin teshis.
+		Log("[SPAWN] Kendi oyuncu adim: '%s' (XML nickname: '%s')", playerInfo[g_myPlayerID].szPlayerName, g_szNickName);
 		sendServerCommand((char *)"/fr");
 	}
 
 	// Reconnect + spawn: tarama aktifse KALDIGI ZONEDEN DEVAM (o zone'a yeniden
 	// teleport + /gzinfo). Scan state'i (queue/idx) hafizada korunur. Mute-bayragi
-	// olsun olmasin calisir — genel baglanti kopup gelince de ayni koruma gerekli,
+	// olsun olmasin calisir - genel baglanti kopup gelince de ayni koruma gerekli,
 	// yoksa spawn noktasinda /gzinfo atip YANLIS zone sahibi ogreniyordu.
 	if(g_zoneScanIdx >= 0 && g_zoneScanIdx < g_zoneScanQ)
 	{
@@ -3615,13 +4063,32 @@ LRESULT CALLBACK SAMPDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 					}
 
 					GetWindowText(hwndEditBox, szResponse, 257);
-					sendDialogResponse(sampDialog.wDialogID, 1, 0, szResponse);
+					// LOGIN DIALOG: kullanici Login'e basti — ne gonderildigini logla
+					Log("[DIALOG-SUBMIT] Button1, dialog=%d style=%d, input='%s' (len=%d)",
+						sampDialog.wDialogID, sampDialog.bDialogStyle, szResponse, (int)strlen(szResponse));
+					if(strstr(sampDialog.szTitle, "Login") || strstr(sampDialog.szTitle, "Giris"))
+					{
+						// Login submit: GTA client ile BIREBIR AYNI format (BYTE uzunluk,
+						// listitem 0xFFFF). sendDialogResponse WORD kullaniyor — gstats icin
+						// sorun degil ama login sifresini sunucu siki parse ediyor.
+						BYTE bRespLen = (BYTE)strlen(szResponse);
+						RakNet::BitStream bsLogin;
+						bsLogin.Write((uint16_t)sampDialog.wDialogID);
+						bsLogin.Write((uint8_t)1);
+						bsLogin.Write((uint16_t)0xFFFF);
+						bsLogin.Write((uint8_t)bRespLen);
+						bsLogin.Write(szResponse, bRespLen);
+						pRakClient->RPC(&RPC_DialogResponse, &bsLogin, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
+						Log("[LOGIN] Sifre GTA-formatinda gonderildi ('%s', len=%d).", szResponse, (int)bRespLen);
+					}
+					else
+						sendDialogResponse(sampDialog.wDialogID, 1, 0xFFFF, szResponse);
 					PostQuitMessage(0);
 					break;
 
 				case IDB_BUTTON2:
 					GetWindowText(hwndEditBox, szResponse, 257);
-					sendDialogResponse(sampDialog.wDialogID, 0, 0, szResponse);
+					sendDialogResponse(sampDialog.wDialogID, 0, 0xFFFF, szResponse);
 					PostQuitMessage(0);
 					break;
 			}
@@ -3807,7 +4274,7 @@ void ScrDialogBox(RPCParameters *rpcParams)
 
 	// /gstats dialogu sonucu: "- Tag: [XX]" satirindan kisa etiketi (tag) ogren ve
 	// group_colors'a yaz. /gzinfo isim/renk baglar; tag ise /gstats'tan gelir (her
-	// /gstats acilisinda — manuel ?gstats, Discord komutu, ?zgrp harvest). ?zgrp
+	// /gstats acilisinda - manuel ?gstats, Discord komutu, ?zgrp harvest). ?zgrp
 	// harvest aktifse (g_ghpActive) zinciri de ilerlet (sonraki /gstats <ID>).
 	if(g_waitingForGStats)
 	{
@@ -3975,9 +4442,9 @@ void ScrSetPlayerFacingAngle(RPCParameters *rpcParams)
 	}
 }
 
-// RPC 108 (RPC_ScrAddGangZone): sunucu gang zone oluştururken minX,minY,maxX,maxY
-// float'ları gönderir; zone ID client tarafında sıralı atanır. UIF zone numaraları
-// (#0'dan itibaren, haritanın üst solundan) bu sırayla eşleşir -> ?zgo için kaydet.
+// RPC 108 (RPC_ScrAddGangZone): sunucu gang zone olu-stururken minX,minY,maxX,maxY
+// float'lar-▒ g-nderir; zone ID client taraf-▒nda s-▒ral-▒ atan-▒r. UIF zone numaralar-▒
+// (#0'dan itibaren, haritan-▒n -╝st solundan) bu s-▒rayla e-sle-sir -> ?zgo i-gin kaydet.
 void ScrAddGangZone(RPCParameters *rpcParams)
 {
 	PCHAR Data = reinterpret_cast<PCHAR>(rpcParams->input);
@@ -3987,7 +4454,7 @@ void ScrAddGangZone(RPCParameters *rpcParams)
 	RakNet::BitStream bsData((unsigned char *)Data,(iBitLength/8)+1,false);
 
 	// Format (cozumlendi): WORD zoneId + 4 float (minX, minY, maxX, maxY) + 4 byte renk.
-	// Renk paketten OKUNUR ama SAKLANMAZ/KULLANILMAZ — eslesme isim bazlidir.
+	// Renk paketten OKUNUR ama SAKLANMAZ/KULLANILMAZ - eslesme isim bazlidir.
 	unsigned short usZoneId;
 	float fMinX, fMinY, fMaxX, fMaxY;
 	unsigned int uiColor = 0;
@@ -4006,8 +4473,8 @@ void ScrAddGangZone(RPCParameters *rpcParams)
 	}
 }
 
-// RPC 120 (RPC_ScrRemoveGangZone): zone kaldırılır. Listeyi sıfırlamayız çünkü
-// zone numaraları (#N) sabittir; sadece gerekirse tekrar toplanır.
+// RPC 120 (RPC_ScrRemoveGangZone): zone kald-▒r-▒l-▒r. Listeyi s-▒f-▒rlamay-▒z -g-╝nk-╝
+// zone numaralar-▒ (#N) sabittir; sadece gerekirse tekrar toplan-▒r.
 void ScrRemoveGangZone(RPCParameters *rpcParams)
 {
 	PCHAR Data = reinterpret_cast<PCHAR>(rpcParams->input);
@@ -4038,7 +4505,7 @@ void ScrFlashGangZone(RPCParameters *rpcParams)
 	// Surekli harita izleme (YS.Hold: "rely on Flash and a monitoring system to
 	// constantly track the map"): ismi bilinmeyen bir zone flashlanirsa otomatik takip,
 	// StartFlashScan /gzinfo ile sahibini ogrenir ve ?zf'ye ekler. ?zgrp harvest
-	// surerken tetikLENMEZ — o an yalnizca taglar ogrenilir.
+	// surerken tetikLENMEZ - o an yalnizca taglar ogrenilir.
 	if(g_zoneOwnerName[usZoneId][0] == 0 && g_zscanAuto && !g_ghpActive)
 	{
 		Log("[GANGZONE:FLASH] Ismi bilinmeyen zone #%u flashlandi, otomatik tarama tetikleniyor.", usZoneId);
@@ -4059,7 +4526,7 @@ void ScrStopFlashGangZone(RPCParameters *rpcParams)
 	{
 		g_zoneFlash[usZoneId] = false;
 		Log("[GANGZONE:STOPFLASH] id=%u", usZoneId);
-		// Kirmizi yanip somne durdu (grup rengine dondü): o zone artik o grubun degil —
+		// Kirmizi yanip somne durdu (grup rengine dond-╝): o zone artik o grubun degil -
 		// DB'den sil, grubun zone sayisi duser. Sahip bilinmiyorsa StartFlashScan
 		// /gzinfo ile ogrenir (RemoveZoneFromDb g_zoneOwnerName'e bagli degil, id yeter).
 		RemoveZoneFromDb((int)usZoneId);
@@ -4195,8 +4662,8 @@ void ScrCreate3DTextLabel(RPCParameters *rpcParams)
 	}
 }
 
-// UIF savaş zamanlayıcı textdraw'ı: "~r~~h~4~w~-~b~~h~3 ~n~~w~08:27" -> "08:27" (dk:sn).
-// Gerçek kalan süreyi yakalar; ?gzt bunu baz alir (chat duyuru anindan hesaplamak sagliksiz).
+// UIF sava-s zamanlay-▒c-▒ textdraw'-▒: "~r~~h~4~w~-~b~~h~3 ~n~~w~08:27" -> "08:27" (dk:sn).
+// Ger-gek kalan s-╝reyi yakalar; ?gzt bunu baz alir (chat duyuru anindan hesaplamak sagliksiz).
 static void CaptureWarTimer(const char *pText, int iLen)
 {
 	if(!pText || !g_inZoneWar) return;
@@ -4292,7 +4759,7 @@ void ScrShowTextDraw(RPCParameters *rpcParams)
 	if((g_zoneScanIdx >= 0 || g_ghpActive) && strstr(cText, "MUTED") && !g_muteReconnectPending && iSpawned)
 	{
 		g_muteReconnectPending = true;
-		Log("[MUTE] Komut mutesi yakalandi (%s) — hemen yeniden baglanilip islem surdurulecek.", cText);
+		Log("[MUTE] Komut mutesi yakalandi (%s) - hemen yeniden baglanilip islem surdurulecek.", cText);
 		resetPools(1, 0); // aninda reconnect; cmd mute reconnect ile kalkar
 	}
 
@@ -4302,13 +4769,13 @@ void ScrShowTextDraw(RPCParameters *rpcParams)
 	// --- Kill list yakalayici: GZ sonucu textdraw'larini X/Y ile topla ---
 	// Kill-list textdraw'lari AYRI AYRI gelir (ID 70 "Name", 71 "Kills", ... basliklar
 	// Y=80; her oyuncu satiri Y=95+ ve kolonlar X ile hizali). Ayni Y'deki textdraw'lar
-	// X'e gore siralanip satir olusturur (FinalizeKillList). Timer textdraw'i hariç
+	// X'e gore siralanip satir olusturur (FinalizeKillList). Timer textdraw'i hari-g
 	// GZ icinde gelen her sey toplanir; gereksiz textdraw'lar finalize'da elenir.
 	if(g_zwCapturingKillList && !g_zwKillListSent)
 	{
 		// Timer textdraw'i (ID 58/65, "0-0 ~n~ 09:59" gibi) toplanmaz
 		if(wTextID == 58 || wTextID == 65) { /* timer */ }
-		// Dev/büyük UI mesaj textdraw'lari (savas disi uyarilari "YOU ARE OUTSIDE THE
+		// Dev/b-╝y-╝k UI mesaj textdraw'lari (savas disi uyarilari "YOU ARE OUTSIDE THE
 		// WAR AREA", "Teleported", "You are not in a group zone", etkinlik afisleri)
 		// skorboard verisi degildir; yakalanirsa sonuca satir olarak karisip takim
 		// rengini zehirliyordu (0x106290). Skorboard hucreleri kucuk puntoludur;
@@ -4316,7 +4783,7 @@ void ScrShowTextDraw(RPCParameters *rpcParams)
 		else if(TextDrawTransmit.fLetterHeight >= 2.0f) { /* UI mesaj kutusu: atla */ }
 		else if(cTextLen > 0 && cText[0])
 		{
-			// Temiz metin (renk kodlari atilir) — dedup ve takim rengi icin
+			// Temiz metin (renk kodlari atilir) - dedup ve takim rengi icin
 			std::string strClean;
 			for(int i = 0; i < cTextLen; i++)
 			{
@@ -4363,7 +4830,7 @@ void ScrShowTextDraw(RPCParameters *rpcParams)
 				}
 			}
 
-			// X/Y + text olarak sakla (aynı ID'nin tekrari olmasin)
+			// X/Y + text olarak sakla (ayn-▒ ID'nin tekrari olmasin)
 			bool bDup = false;
 			for(int k = 0; k < g_zwKillTdCount; k++)
 			{
@@ -4485,7 +4952,7 @@ void FinalizeKillList()
 	{
 		// Bos finalize KAPTaji oldurmez: gercek skorboard son 2 sn + bitis
 		// textdraw'larinda gelir (bot o an disarida olabilir). Pencere yenilenir,
-		// KillListSent YOK — sonraki toplama devam eder. Eski davranis bos
+		// KillListSent YOK - sonraki toplama devam eder. Eski davranis bos
 		// finalize'de sent=true yapip kaptaji tum savas boyunca kilitliyordu
 		// ("gz sonucl.txt yazilmadi" vakasi).
 		g_zwCaptureStart = GetTickCount();
@@ -4506,7 +4973,7 @@ void FinalizeKillList()
 	}
 
 	// Y'ye gore satir gruplama: satirlar 15 birim arayla (Y=95,110,125...); tolerans
-	// 5 — eski 20, komsu satirlari birbirine karistiriyordu ("Name hakixld 0 0 0 ...").
+	// 5 - eski 20, komsu satirlari birbirine karistiriyordu ("Name hakixld 0 0 0 ...").
 	// Her satir: rank(X=135, ATILIR), Name(X=160), K(X=280), A(X=340), D(X=400), DMG(X=460).
 	std::string strMine, strEnemy, strUnknown;
 	char szHeader[64] = "";
@@ -4602,7 +5069,7 @@ void FinalizeKillList()
 		for(int c = 0; c < nCells; c++)
 		{
 			float fX = cells[c].fX;
-			// Rank sütunu (X=135, "1 2 3...") E1 formatinda yok — atilir.
+			// Rank s-╝tunu (X=135, "1 2 3...") E1 formatinda yok - atilir.
 			if(fX < 145.0f) continue;
 			if(fX < 220.0f) strncpy_s(szName, sizeof(szName), cells[c].szText, _TRUNCATE);
 			else if(fX < 310.0f) strncpy_s(szK, sizeof(szK), cells[c].szText, _TRUNCATE);
@@ -4691,10 +5158,20 @@ void FinalizeKillList()
 void ProcessZoneWarAutoJoin()
 {
 	DWORD dwNow = GetTickCount();
+	// Stuck war temizleme
+	if(g_inZoneWar && g_zoneWarStartTick != 0 && dwNow - g_zoneWarStartTick > 15*60*1000){
+		Log("[ZONEWAR] Savas 15dk'yi asti (stuck), temizleniyor.");
+		g_inZoneWar = false;
+		g_warRemainingSec = -1;
+		g_warTimerTick = 0;
+		g_warTimerViaTdw = false;
+		g_gztCountdownAnnounced = 999;
+		g_zoneWarStartTick = 0;
+	}
 
-	// ?gzt geri sayimi: uL.Hold/YS tarzi SABIT esikler — 09:10 / 09:03 / 09:01 /
+	// ?gzt geri sayimi: uL.Hold/YS tarzi SABIT esikler - 09:10 / 09:03 / 09:01 /
 	// 00:10 / 00:03 / 00:01. SADECE TEXTDRAW kaynakli timer gecerli (kendi savasimiz
-	// GZ'sinde görünür); baska savaslarin "Time left:" chat mesajlari geri sayim
+	// GZ'sinde g-r-╝n-╝r); baska savaslarin "Time left:" chat mesajlari geri sayim
 	// baslatmaz (bizde savas yokken "War ends in 05:00!" phantom duyurulariyordu).
 	if(g_inZoneWar && g_gztOn && g_warTimerViaTdw)
 	{
@@ -4707,17 +5184,26 @@ void ProcessZoneWarAutoJoin()
 			static const int iT[] = { 9*60+10, 9*60+3, 9*60+1, 10, 3, 1 };
 			const int nT = 6;
 
-			int iNext = 9999;
+			// Textdraw saniyesi saniyesine yakalaniyor; sadece tam esikte duyur.
+			// Gec acilan ?gzt (9:10 esigi kacmisken 9:05'te acildi) 9:10'u gecmise
+			// donuk duyurmasin — bir sonraki esik 9:03 beklenir.
+			int iNext = -1;
 			for(int i = 0; i < nT; i++)
-				if(iRemainingSec <= iT[i] && iT[i] < iNext)
+				if(iRemainingSec == iT[i] && iT[i] < g_gztCountdownAnnounced && iT[i] > iNext)
 					iNext = iT[i];
+			// Textdraw 1 sn atlayabilir (lag) — 1 sn gecikmeyi de yakala
+			if(iNext == -1){
+				for(int i = 0; i < nT; i++)
+					if(iRemainingSec == iT[i]-1 && iT[i] < g_gztCountdownAnnounced && iT[i] > iNext)
+						iNext = iT[i];
+			}
 
-			if(iNext < g_gztCountdownAnnounced)
+			if(iNext >= 0 && iNext < g_gztCountdownAnnounced)
 			{
 				g_gztCountdownAnnounced = iNext;
 				// Her esik DUYURULUR (uL.Hold gibi): 09:10/09:03/09:01 aralari
 				// 2-7 sn oldugu icin eskiden eklenen "patlama onleme" bunlari
-				// yutuyordu — kaldirildi. Tekrar korumasini iNext<announced saglar.
+				// yutuyordu - kaldirildi. Tekrar korumasini iNext<announced saglar.
 				char szCnt[128];
 				sprintf_s(szCnt, sizeof(szCnt),
 					LM("!Savas %02d:%02d sonra bitiyor!", "!War ends in %02d:%02d!"),
@@ -4760,7 +5246,7 @@ void ProcessZoneWarAutoJoin()
 	}
 
 	// Kisa GZ giris donusu: takim rengi ogrenildi (ya da sure doldu), /fr ile freeroam'a don.
-	// Kill-list girisinde (g_zwKillListStay) GZ'de KALINIR — savaş bitince won/loses
+	// Kill-list girisinde (g_zwKillListStay) GZ'de KALINIR - sava-s bitince won/loses
 	// textdraw'i gelir, FinalizeKillList /fr'yi kendisi gonderir. Kisa giris (savas basi
 	// 6 sn / 09:02 kontrol 2 sn) her zaman cikar.
 	if(g_zwReturnPending && dwNow >= g_zwReturnAt)
@@ -4777,10 +5263,10 @@ void ProcessZoneWarAutoJoin()
 	// Kill-list textdraw'lari sadece GZ icindekilere gelir; bitis textdraw'lari
 	// g_zwCapturingKillList acikken toplanir, pencere dolunca finalize edilir.
 	// Iki asamali giris (kullanici istegi):
-	//  1) 09:02'de kisa kontrol girisii — savaş aktif mi diye GZ'ye gir, 2 sn kal, /fr ile don.
+	//  1) 09:02'de kisa kontrol girisii - sava-s aktif mi diye GZ'ye gir, 2 sn kal, /fr ile don.
 	//     (Saldiri yapilan gruptan kimse gz2'ye katilmazsa savas ~1 dk icinde biter ve
-	//      zone sahibi olunur; kontrol girisii savaşin hala surdugunu ogrenir.)
-	//  2) 00:02'de kill-list girisii — iceride kal, kill list textdraw'larini topla, bitince Discord'a at.
+	//      zone sahibi olunur; kontrol girisii sava-sin hala surdugunu ogrenir.)
+	//  2) 00:02'de kill-list girisii - iceride kal, kill list textdraw'larini topla, bitince Discord'a at.
 	if(g_inZoneWar && !g_zwAutoJoinSent)
 	{
 		int iLeft = -1;
@@ -4793,8 +5279,8 @@ void ProcessZoneWarAutoJoin()
 		else if(g_zoneWarStartTick != 0)
 			iLeft = (int)((ZONE_WAR_TOTAL_MS - (dwNow - g_zoneWarStartTick)) / 1000);
 
-		// 1) 09:02 kontrol girisii (bir kez): timer 09:02'ye indiğinde GZ'ye gir,
-		//    savaş aktifse timer'ı da tazeler; 2 sn sonra /fr ile geri don.
+		// 1) 09:02 kontrol girisii (bir kez): timer 09:02'ye indi-sinde GZ'ye gir,
+		//    sava-s aktifse timer'-▒ da tazeler; 2 sn sonra /fr ile geri don.
 		if(!g_zwCheckJoinSent && !g_zwReturnPending)
 		{
 			if(iLeft >= 0 && iLeft <= 9 * 60 + 2)
@@ -4802,7 +5288,7 @@ void ProcessZoneWarAutoJoin()
 				g_zwCheckJoinSent = true;
 				g_zwReturnPending = true;
 				g_zwReturnAt = dwNow + 2000; // 2 sn kontrol
-				Log("[KILLLIST] 09:02 kontrol girisii: savaş aktif mi bakiliyor (kalan %d sn).", iLeft);
+				Log("[KILLLIST] 09:02 kontrol girisii: sava-s aktif mi bakiliyor (kalan %d sn).", iLeft);
 				sendServerCommand((char *)"/gz2");
 			}
 		}
@@ -4832,7 +5318,7 @@ void ProcessZoneWarAutoJoin()
 	}
 
 	// Toplama: yakalayici acikken sadece GERCEK bitis/veri aninda finalize et.
-	// 1) Savas bitisi (wins/loses bloğu g_zwFinalizeAt = now+3000 kurar): bitis
+	// 1) Savas bitisi (wins/loses blo-su g_zwFinalizeAt = now+3000 kurar): bitis
 	//    textdraw'lari geldikten 3 sn sonra finalize.
 	// 2) Pencere modu: veri BIRIKTIYSE (g_zwKillTdCount>0) window dolunca finalize;
 	//    bos pencere kaptaji durdurmaz (skorboard son anlarda geliyor).
@@ -5042,7 +5528,7 @@ bool LearnGroupTagFromGStats(const char *szInfo)
 	const char *pTag = strstr(szInfo, "Tag:");
 	if(pTag)
 	{
-		// UIF /gstats formati: "- Tag:<bosluklar>SG" — tag, Tag: sonrasi ilk
+		// UIF /gstats formati: "- Tag:<bosluklar>SG" - tag, Tag: sonrasi ilk
 		// satir sonuna kadarki metindir. "[...]" parantezli olsa da ayni kural.
 		pTag += 4;
 		const char *pS = pTag;
@@ -5079,7 +5565,7 @@ bool LearnGroupTagFromGStats(const char *szInfo)
 		NormalizeGroupName(szDbName);
 		if(_stricmp(szDbName, szName) == 0) { idx = i; break; }
 	}
-	// Isim esleşmediyse tag eslesmesiyle dene (isimler gzinfo/gstats'ta farkli olabiliyor)
+	// Isim esle-smediyse tag eslesmesiyle dene (isimler gzinfo/gstats'ta farkli olabiliyor)
 	if(idx < 0 && szTag[0])
 	{
 		for(int i = 0; i < g_groupColorCount; i++)
@@ -5183,7 +5669,7 @@ void OnGroupsListCaptured(const char *szInfo)
 		}
 		// /groups satiri "N. Isim <online-sayisi>" biciminde: sondaki sayi uyelik
 		// adedi, ismin parcasi DEGIL. Kesmezsek DB'deki temiz isimle eslesmez ve
-		// hicbir grup ATLANDI sayilmazdi (her periyotta hepsi yeniden taranıyordu).
+		// hicbir grup ATLANDI sayilmazdi (her periyotta hepsi yeniden taran-▒yordu).
 		{
 			int nLen = (int)strlen(szName);
 			int nEnd = nLen;
@@ -5196,7 +5682,7 @@ void OnGroupsListCaptured(const char *szInfo)
 		// DB'de GERCEK kisa tag'i olan grup atlanir: /gstats sadece BILINMEYENLER
 		// icin gonderilir (komut mute riski + gereksiz tekrar).
 		// Isim eslesmesi TEK BASINA yetmez: zone taramasinda ogrenilen gruplara once
-		// tag=isim yazilir (placeholder) — bunlar BILINMEYEN sayilip /gstats ile kisa
+		// tag=isim yazilir (placeholder) - bunlar BILINMEYEN sayilip /gstats ile kisa
 		// taglari cekilir (?zf tam isim yerine kisa tag gostersin diye).
 		bool bKnown = false;
 		char szNeed[80]; strncpy_s(szNeed, sizeof(szNeed), szName, sizeof(szNeed) - 1);
@@ -5222,7 +5708,7 @@ void OnGroupsListCaptured(const char *szInfo)
 		}
 		if(bKnown)
 		{
-			Log("[GHP] '%s' (id=%d) ATLANDI — grup datasi zaten var, eklenmedi.", szName, iId);
+			Log("[GHP] '%s' (id=%d) ATLANDI - grup datasi zaten var, eklenmedi.", szName, iId);
 			nSkipped++;
 			continue;
 		}
@@ -5245,7 +5731,7 @@ void ProcessGhpHarvestStep()
 	if(!g_ghpActive || g_ghpWaitingGstats) return;
 
 	// Komut mute korumasi: deadline dolmadiysa beklet. Zaman asimina dusmus
-	// bekleme (g_waitingForGStats false) deadline'i ASAR — zincir takilmasin.
+	// bekleme (g_waitingForGStats false) deadline'i ASAR - zincir takilmasin.
 	if(g_ghpNextStepAt != 0 && GetTickCount() < g_ghpNextStepAt && g_waitingForGStats) return;
 
 	if(g_ghpIdx >= g_ghpCount)
@@ -5253,6 +5739,7 @@ void ProcessGhpHarvestStep()
 		Log("[GHP] Harvest tamamlandi: %d grup islendi.", g_ghpCount);
 		g_ghpActive = false;
 		g_ghpNextStepAt = 0;
+		g_forceZscanAfterHarvest = true; // zone scan harvesti tetikle (yeni veri varsa, zscan off olsa bile)
 		// ?zgrp on TEK SEferliktir: harvest bitti, otomatik off'a dus (kullanici
 		// istedigi an tekrar ?zgrp on diyebilir; periyodik tekrar YOK).
 		if(g_zgrpAuto)
@@ -5274,14 +5761,14 @@ void ProcessGhpHarvestStep()
 			sendChat(szDone);
 		}
 		// Tag'ler ogrenildi; ?zscan on ise SIMDI flashing zone taramasini baslat
-		// (kullanici sirasi: once taglar, sonra zone ogrenme).
-		if(g_zscanAuto && iSpawned && g_zoneScanIdx < 0 && !g_inZoneWar && !g_zgoActive)
+		// (kullanici sirasi: once taglar, sonra zone ogrenme). Restore sonrasi.
+		if(g_zscanAuto && s_bGroupDbRestored && iSpawned && g_zoneScanIdx < 0 && !g_inZoneWar && !g_zgoActive)
 		{
-			Log("[GHP] Harvest bitti — otomatik zone taramasi baslatiliyor.");
+			Log("[GHP] Harvest bitti - otomatik zone taramasi baslatiliyor.");
 			StartZoneScan(true);
 		}
 		// Tag'ler ogrenildi; ?zf ozeti tag'lerle tekrar atilsin (kullanici istemedigi
-		// surece bir daha harvest yapilmaz — tag'ler db'de kalici).
+		// surece bir daha harvest yapilmaz - tag'ler db'de kalici).
 		if(g_zfFlashPendingFlag || g_zfFlashAt != 0)
 		{
 			g_zfFlashAt = GetTickCount() + 1000;
@@ -5460,3 +5947,4 @@ void UnRegisterRPCs(RakClientInterface * pRakClient)
 		pRakClient->UnregisterAsRemoteProcedureCall(&RPC_ScrStopFlashGangZone);
 	}
 }
+

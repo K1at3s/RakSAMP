@@ -1,4 +1,4 @@
-// hwid -> aktif socket.io bağlantısı (çoklu RakSAMP istemcisi desteği)
+﻿// hwid -> aktif socket.io baglantisi (coklu RakSAMP istemcisi destegi)
 const hwidSockets = new Map();
 const socketHwids = new Map();
 
@@ -23,7 +23,7 @@ function getSocket(hwid) {
     return hwid ? hwidSockets.get(hwid) : undefined;
 }
 
-// Birden fazla HWID bağlıysa ilk çevrimiçi olanı döndür
+// Birden fazla HWID bagliysa ilk cevrimici olani dondur
 function getFirstSocket(hwids) {
     for (const hwid of hwids || []) {
         const socket = hwidSockets.get(hwid);

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+﻿const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models/Guild');
 const { queueCommand } = require('../utils/commandOutbox');
 const { setPendingInteraction } = require('../utils/pendingReplies');
@@ -13,7 +13,7 @@ module.exports = {
 
         if (!guild || !guild.linkedHwids || guild.linkedHwids.length === 0) {
             return interaction.reply({
-                content: '❌ Bu sunucu henüz bir RakSAMP istemcisine bağlı değil. Önce `/link <hwid>` kullanın.',
+                content: '❌ Bu sunucu henuz bir RakSAMP istemcisine bagli degil. Once `/link <hwid>` kullanin.',
                 ephemeral: true
             });
         }
@@ -27,6 +27,6 @@ module.exports = {
         const cmd = id ? `/stats ${id}` : '/stats';
         queueCommand(hwid, { type: 'gstats', cmd, requesterId: interaction.id });
 
-        console.log(`📊 [STATS] Komut kuyruğa alındı (id="${id ?? 'kendi'}", requester=${interaction.id})`);
+        console.log(`📊 [STATS] Komut kuyruga alindi (id="${id ?? 'kendi'}", requester=${interaction.id})`);
     }
 };

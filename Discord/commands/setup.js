@@ -1,8 +1,8 @@
-const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
+﻿const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const Guild = require('../models/Guild');
 
-// /setup: botun tüm kanallarını bu sunucuda otomatik oluşturur ve guild kaydına yazar.
-// Böylece kullanıcı her kanalı tek tek /setchannel ile ayarlamak zorunda kalmaz.
+// /setup: botun tum kanallarini bu sunucuda otomatik olusturur ve guild kaydina yazar.
+// Boylece kullanici her kanali tek tek /setchannel ile ayarlamak zorunda kalmaz.
 const CHANNELS = [
     { key: 'logChannelId', name: '📜-lisans-log' },
     { key: 'warChannelId', name: '⚔️-war' },
@@ -16,7 +16,7 @@ const CHANNELS = [
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('setup')
-        .setDescription('Botun kanallarını otomatik oluşturur ve bu sunucuya bağlar')
+        .setDescription('Botun kanallarini otomatik olusturur ve bu sunucuya baglar')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     async execute(interaction) {
         await interaction.deferReply();
@@ -44,9 +44,9 @@ module.exports = {
             );
         }
 
-        let msg = `✅ **${created.length}** kanal oluşturuldu ve bu sunucuya bağlandı.`;
-        if (skipped.length) msg += `\n⚠️ Oluşturulamayan: ${skipped.join(', ')} (elle /setchannel ile ayarla)`;
-        if (!created.length) msg = '❌ Hiç kanal oluşturulamadı. Botun bu sunucuda kanal açma yetkisi olmalı.';
+        let msg = `✅ **${created.length}** kanal olusturuldu ve bu sunucuya baglandi.`;
+        if (skipped.length) msg += `\n⚠️ Olusturulamayan: ${skipped.join(', ')} (elle /setchannel ile ayarla)`;
+        if (!created.length) msg = '❌ Hic kanal olusturulamadi. Botun bu sunucuda kanal acma yetkisi olmali.';
 
         await interaction.editReply(msg);
     }

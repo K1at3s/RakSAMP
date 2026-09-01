@@ -1,6 +1,6 @@
-// Veri katmanı köprüsü: yalnızca MySQL/ProxySQL (Mongo katmanı kaldırıldı).
+﻿// Veri katman─▒ k├Âpr├╝s├╝: yaln─▒zca MySQL/ProxySQL (Mongo katman─▒ kald─▒r─▒ld─▒).
 // mongoose-uyumlu minimal API: findOne / create / findOneAndUpdate( $set|$addToSet|$pull ) + instance.save()
-// Kapsam: yalnızca kodun 8 slash komut dosyası + guildUtils + server.js'te KULLANDIĞI şekiller.
+// Kapsam: yaln─▒zca kodun 8 slash komut dosyas─▒ + guildUtils + server.js'te KULLANDI─SI ┼sekiller.
 const config = require('./config');
 
 let pool = null;
@@ -108,7 +108,7 @@ function makeModel(table, def) {
                 if (opts.setDefaultsOnInsert !== false && opts.setDefaultsOnInsert !== true) {}
             }
             for (const [op, fields] of Object.entries(update || {})) {
-                // mongoose uyumluluğu: operatörsüz bare field ({ isApproved: true }) = $set
+                // mongoose uyumlulu─su: operat├Ârs├╝z bare field ({ isApproved: true }) = $set
                 if (!op.startsWith('$')) {
                     for (const [k, v] of Object.entries(update)) inst[k] = v;
                     break;
@@ -137,7 +137,7 @@ function ensurePool() {
 
 async function init() {
     const p = ensurePool();
-    // şema bootstrap'ı: boş DB'de ilk açılışta tabloları kurar (schema.sql ile aynı)
+    // ┼sema bootstrap'─▒: bo┼s DB'de ilk a├g─▒l─▒┼sta tablolar─▒ kurar (schema.sql ile ayn─▒)
     for (const def of Object.values(registry)) {
         const cols = Object.entries(def.fields).map(([, c]) => {
             const t = c.type === 'json' ? 'TEXT' : c.type === 'int' ? 'TINYINT' : 'VARCHAR(255)';
@@ -145,7 +145,7 @@ async function init() {
         });
         await p.execute(`CREATE TABLE IF NOT EXISTS ${def.table} (${cols.join(', ')})`);
     }
-    // client push tabloları (oyuncu cache + grup renkleri)
+    // client push tablolar─▒ (oyuncu cache + grup renkleri)
     await p.execute(`CREATE TABLE IF NOT EXISTS players (
         id INT PRIMARY KEY,
         name VARCHAR(64) NULL,
@@ -155,7 +155,7 @@ async function init() {
         updated_at DATETIME NULL
     )`);
     // Kalici zone->sahip haritasi gangs.tablosundaki zones JSON alanindadir
-    // (gruba gore TEK satir). Ayri zones tablosu YOK — tek dogru kaynak gangs.
+    // (gruba gore TEK satir). Ayri zones tablosu YOK ÔCo tek dogru kaynak gangs.
     // Ogrenilen grup adi + kisa tag haritasi (gruba gore TEK satir; zone kaydi yok).
     // 'groups' MySQL reserved word oldugu icin tablo adi 'gangs'.
     await p.execute(`CREATE TABLE IF NOT EXISTS gangs (
@@ -181,7 +181,8 @@ async function init() {
     await p.execute(`ALTER TABLE bots ADD COLUMN zscan_enabled TINYINT NOT NULL DEFAULT 0`).catch(() => {});
     await p.execute(`ALTER TABLE bots ADD COLUMN gzt_enabled TINYINT NOT NULL DEFAULT 1`).catch(() => {});
     await p.execute(`ALTER TABLE bots ADD COLUMN zgrp_enabled TINYINT NOT NULL DEFAULT 1`).catch(() => {});
-    // Index seçici ekleme yok
+    await p.execute(`ALTER TABLE guilds ADD COLUMN allowed_role_id VARCHAR(255) NULL`).catch(() => {});
+    // Index se├gici ekleme yok
     // Admin loglari: oyun ici "ADMIN: X banned/muted/kicked/disarmed Y(id) ..." yakalamasi
     await p.execute(`CREATE TABLE IF NOT EXISTS admin_logs (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -193,6 +194,15 @@ async function init() {
         duration_min INT NULL,
         reason VARCHAR(255) NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+    // Kisi bazli hos geldin mesajlari (B secenegi): hwid + hedef oyuncu ismi -> ozel mesaj
+    await p.execute(`CREATE TABLE IF NOT EXISTS welcome_per_user (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        hwid VARCHAR(255) NOT NULL,
+        target_name VARCHAR(64) NOT NULL,
+        custom_message VARCHAR(255) NOT NULL,
+        updated_at DATETIME NULL,
+        UNIQUE KEY uq_hwid_target (hwid, target_name)
     )`);
     // Grup rol degisikligi loglari: "(Ad)(accid) changed the rank of Hedef(accid) ..."
     await p.execute(`CREATE TABLE IF NOT EXISTS group_logs (
@@ -209,13 +219,13 @@ async function init() {
     return p;
 }
 
-// Ham SQL: server.js route'ları doğrudan kullanır.
+// Ham SQL: server.js route'lar─▒ do─srudan kullan─▒r.
 async function execute(sql, vals) {
     const [rows] = await ensurePool().execute(sql, vals);
     return rows;
 }
 
-// Batch INSERT ... VALUES ? için (mysql2'de bu şekil yalnızca query()'de çalışır)
+// Batch INSERT ... VALUES ? i├gin (mysql2'de bu ┼sekil yaln─▒zca query()'de ├gal─▒┼s─▒r)
 async function query(sql, vals) {
     const [rows] = await ensurePool().query(sql, vals);
     return rows;

@@ -1,34 +1,34 @@
-const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+﻿const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const Guild = require('../models/Guild');
 const { sendToGuildChannel } = require('../utils/discordNotifier');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('zonewar')
-        .setDescription('ZONE WAR bildirimini manuel olarak zonewar kanalına gönderir')
-        .addStringOption(o => o.setName('grup').setDescription('Saldıran grup').setRequired(true))
+        .setDescription('ZONE WAR bildirimini manuel olarak zonewar kanalina gonderir')
+        .addStringOption(o => o.setName('grup').setDescription('Saldiran grup').setRequired(true))
         .addStringOption(o => o.setName('durum')
-            .setDescription('Savaş durumu')
+            .setDescription('Savas durumu')
             .setRequired(true)
             .addChoices(
                 { name: 'Zone tuttu', value: 'keeps' },
-                { name: 'Zone aldı', value: 'takes' },
-                { name: 'Kazandı', value: 'wins' },
+                { name: 'Zone aldi', value: 'takes' },
+                { name: 'Kazandi', value: 'wins' },
                 { name: 'Kaybetti', value: 'loses' }
             ))
-        .addStringOption(o => o.setName('rakip').setDescription('Rakip grup (wins/loses için)').setRequired(false))
-        .addStringOption(o => o.setName('bölge').setDescription('Bölge adı').setRequired(false))
+        .addStringOption(o => o.setName('rakip').setDescription('Rakip grup (wins/loses icin)').setRequired(false))
+        .addStringOption(o => o.setName('bolge').setDescription('Bolge adi').setRequired(false))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     async execute(interaction) {
         const guild = await Guild.findOne({ guildId: interaction.guildId });
         if (!guild) {
-            return interaction.reply({ content: '❌ Sunucu kaydı bulunamadı.', ephemeral: true });
+            return interaction.reply({ content: '❌ Sunucu kaydi bulunamadi.', ephemeral: true });
         }
 
         const ownGroup = interaction.options.getString('grup');
         const action = interaction.options.getString('durum');
         const enemyGroup = interaction.options.getString('rakip') || '';
-        const zoneName = interaction.options.getString('bölge') || '';
+        const zoneName = interaction.options.getString('bolge') || '';
 
         const actionText = {
             keeps: 'keeps zone',
@@ -53,8 +53,8 @@ module.exports = {
         const channelId = await sendToGuildChannel(guild, 'zoneWarChannelId', { embed });
         await interaction.reply({
             content: channelId
-                ? `✅ ZONE WAR bildirimi <#${channelId}> kanalına gönderildi.`
-                : '⚠️ zonewar kanalı ayarlanmamış. `/setchannel zone-war <kanal>` ile ayarlayın.',
+                ? `✅ ZONE WAR bildirimi <#${channelId}> kanalina gonderildi.`
+                : '⚠️ zonewar kanali ayarlanmamis. `/setchannel zone-war <kanal>` ile ayarlayin.',
             ephemeral: true
         });
     }

@@ -1,13 +1,13 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+﻿const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const Guild = require('../models/Guild');
 const { queueCommand } = require('../utils/commandOutbox');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('send')
-        .setDescription('Oyun içindeki RakSAMP istemcisine komut/sohbet mesajı iletir')
+        .setDescription('Oyun icindeki RakSAMP istemcisine komut/sohbet mesaji iletir')
         .addStringOption(o => o.setName('komut')
-            .setDescription('İletilecek komut (örn. ?au Merhaba, /gstats, selam)')
+            .setDescription('Iletilecek komut (orn. ?au Merhaba, /gstats, selam)')
             .setRequired(true))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     async execute(interaction) {
@@ -16,7 +16,7 @@ module.exports = {
 
         if (!guild || !guild.linkedHwids || guild.linkedHwids.length === 0) {
             return interaction.reply({
-                content: '❌ Bu sunucu henüz bir RakSAMP istemcisine bağlı değil. Önce `/link <hwid>` kullanın.',
+                content: '❌ Bu sunucu henuz bir RakSAMP istemcisine bagli degil. Once `/link <hwid>` kullanin.',
                 ephemeral: true
             });
         }
@@ -24,6 +24,6 @@ module.exports = {
         const hwid = guild.linkedHwids[0];
         queueCommand(hwid, { type: 'command', cmd, author: interaction.user.username });
 
-        await interaction.reply(`✅ Komut kuyruğa alındı. **\`${hwid}\`** istemcisine iletiliyor: \`${cmd.slice(0, 150)}\``);
+        await interaction.reply(`✅ Komut kuyruga alindi. **\`${hwid}\`** istemcisine iletiliyor: \`${cmd.slice(0, 150)}\``);
     }
 };

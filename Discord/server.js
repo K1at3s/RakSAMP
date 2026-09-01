@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const crypto = require('crypto');
-const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder } = require('discord.js');
 
 const config = require('./config');
 const License = require('./models/License');
@@ -12,10 +12,25 @@ const socketStore = require('./utils/socketStore');
 const { loadCommands, registerCommands, registerForGuild, handleInteraction } = require('./handlers/commandHandler');
 const db = require('./db');
 
+// Windows konsolunda emoji/Turkce duzgun gorunsun
+if(process.platform==='win32'){ try{ require('child_process').execSync('chcp 65001', {stdio:'ignore'}); }catch{} }
+
 // --- HWID ONAY YAPILANDIRMASI (yalnızca sahibin sunucusu) ---
 const OWNER_ID = '1065352859195015260';          // sadece bu kullanıcı onaylayıp reddedebilir
 const OWNER_GUILD_ID = '1079118636729520139';    // butonlar bu sunucuda anlamlı
 const OWNER_LOG_CHANNEL_ID = '1537910799287459880'; // bildirimler bu kanala otomatik düşer
+
+// --- GROLE/GRANK YETKI KONTROLU (DB -> Guild.allowedRoleId) ---
+async function hasGrolePermission(interaction){
+    try{
+        const guild = await Guild.findOne({ guildId: interaction.guildId });
+        if(!guild || !guild.allowedRoleId) return true; // kisitlama yoksa herkes
+        if(interaction.member.roles.cache.has(guild.allowedRoleId)) return true;
+        if(interaction.member.permissions.has('Administrator') || interaction.member.permissions.has('ManageGuild')) return true;
+        if(interaction.guild.ownerId === interaction.user.id) return true;
+        return false;
+    }catch{ return true; }
+}
 
 // --- EXPRESS & SOCKET.IO SETUP ---
 const app = express();
@@ -53,6 +68,122 @@ client.on('guildCreate', async (guild) => {
 });
 
 client.on('interactionCreate', async (interaction) => {
+    // /grole interaktif: uye secimi -> rol secimi (DB izinli rol kontrolu)
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('grole_member_select:')) {
+        if(!(await hasGrolePermission(interaction))) return interaction.reply({ content: '❌ Bu menüyü kullanmaya yetkin yok.', ephemeral: true });
+        const requesterId = interaction.customId.split(':')[1];
+        const selectedMember = interaction.values[0];
+        if (selectedMember === '__none__') return interaction.reply({ content: '❌ Üye bulunamadı.', ephemeral: true });
+        const cache = groleMemberCache.get(requesterId);
+        groleSelections.set(interaction.user.id, { target: selectedMember, guildId: interaction.guildId, hwid: cache ? cache.hwid : '' });
+        const roleSelect = new StringSelectMenuBuilder()
+            .setCustomId(`grole_role_select:${requesterId}:${encodeURIComponent(selectedMember)}`)
+            .setPlaceholder('Rol seç...')
+            .addOptions([
+                { label: 'Member', value: 'Member' },
+                { label: 'Co-Leader', value: 'Co-Leader' },
+            ]);
+        const row = new ActionRowBuilder().addComponents(roleSelect);
+        const embed = new EmbedBuilder()
+            .setTitle(`👤 ${selectedMember}`)
+            .setDescription('Bu üyeye vermek istediğin rolü seç:')
+            .setColor(0x2ECC71);
+        return interaction.update({ embeds: [embed], components: [row] });
+    }
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('grole_role_select:')) {
+        if(!(await hasGrolePermission(interaction))) return interaction.reply({ content: '❌ Bu menüyü kullanmaya yetkin yok.', ephemeral: true });
+        const parts = interaction.customId.split(':');
+        const requesterId = parts[1];
+        const member = decodeURIComponent(parts[2] || '');
+        const role = interaction.values[0];
+        const guild = await Guild.findOne({ guildId: interaction.guildId });
+        if (!guild || !guild.linkedHwids || guild.linkedHwids.length === 0) {
+            return interaction.update({ content: '❌ Bağlı RakSAMP istemcisi yok.', embeds: [], components: [] });
+        }
+        const hwid = guild.linkedHwids[0];
+        queueCommand(hwid, { type: 'grole', target: member, role, requesterId: interaction.id });
+        setPendingInteraction(interaction.id, interaction);
+        // 5 dk sonra otomatik kapat
+        setTimeout(() => { interaction.editReply({ content: '✅ İşlem tamamlandı.', embeds: [], components: [] }).catch(()=>{}); removePendingInteraction(interaction.id); }, 2*60*1000);
+        const embed = new EmbedBuilder()
+            .setTitle('✅ Gönderildi')
+            .setDescription(`\`/grole ${member} → ${role}\` oyuna iletildi — paginated listede aranıp uygulanacak.`)
+            .setColor(0x00FF00);
+        return interaction.update({ embeds: [embed], components: [] });
+    }
+    // Sayfali uye listesi butonlari (rate-limit dostu: tek edit ile sayfa degisir)
+    if (interaction.isButton() && interaction.customId.startsWith('grole_page_')) {
+        if(!(await hasGrolePermission(interaction))) return interaction.reply({ content: '❌ Bu menüyü kullanmaya yetkin yok.', ephemeral: true });
+        const [, dir, requesterId, pageStr] = interaction.customId.split(':');
+        const cache = groleMemberCache.get(requesterId);
+        if (!cache) return interaction.reply({ content: '❌ Liste süresi doldu, yeniden /grole çalıştır.', ephemeral: true });
+        let page = parseInt(pageStr, 10) || 0;
+        if (dir === 'prev') page = Math.max(0, page - 1);
+        else if (dir === 'next') page = page + 1;
+        grolePageCache.set(requesterId, page);
+        const msg = buildGroleMemberMessage(requesterId, page);
+        if (!msg) return interaction.reply({ content: '❌ Liste bulunamadı.', ephemeral: true });
+        return interaction.update(msg);
+    }
+    if (interaction.isButton() && interaction.customId.startsWith('grank_page_')) {
+        if(!(await hasGrolePermission(interaction))) return interaction.reply({ content: '❌ Bu menüyü kullanmaya yetkin yok.', ephemeral: true });
+        const [, dir, requesterId, pageStr] = interaction.customId.split(':');
+        const cache = grankMemberCache.get(requesterId);
+        if (!cache) return interaction.reply({ content: '❌ Liste süresi doldu, yeniden /grank çalıştır.', ephemeral: true });
+        let page = parseInt(pageStr, 10) || 0;
+        if (dir === 'prev') page = Math.max(0, page - 1);
+        else if (dir === 'next') page = page + 1;
+        grankPageCache.set(requesterId, page);
+        const msg = buildGrankMemberMessage(requesterId, page);
+        if (!msg) return interaction.reply({ content: '❌ Liste bulunamadı.', ephemeral: true });
+        return interaction.update(msg);
+    }
+    // /grank interaktif: uye secimi -> rank secimi (modal veya select)
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('grank_member_select:')) {
+        if(!(await hasGrolePermission(interaction))) return interaction.reply({ content: '❌ Bu menüyü kullanmaya yetkin yok.', ephemeral: true });
+        const requesterId = interaction.customId.split(':')[1];
+        const selectedMember = interaction.values[0];
+        if (selectedMember === '__none__') return interaction.reply({ content: '❌ Üye bulunamadı.', ephemeral: true });
+        // Rank secimi icin modal goster (rate-limit dostu: tek rank listesi yerine yazi girisi)
+        // Veya rank listesini statik goster — 5 dk sonra otomatik kapanacak
+        const rankSelect = new StringSelectMenuBuilder()
+            .setCustomId(`grank_rank_select:${requesterId}:${encodeURIComponent(selectedMember)}`)
+            .setPlaceholder('Rank seç...')
+            .addOptions([
+                { label: 'Member', value: 'Member' },
+                { label: 'Co-Leader', value: 'Co-Leader' },
+                { label: 'Leader', value: 'Leader' },
+                { label: 'Elder', value: 'Elder' },
+                { label: 'Veteran', value: 'Veteran' },
+                { label: 'Recruit', value: 'Recruit' },
+            ]);
+        const row = new ActionRowBuilder().addComponents(rankSelect);
+        const embed = new EmbedBuilder()
+            .setTitle(`👤 ${selectedMember}`)
+            .setDescription('Bu üyeye vermek istediğin rankı seç (5 dk içinde kapanır):')
+            .setColor(0xE67E22);
+        return interaction.update({ embeds: [embed], components: [row] });
+    }
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('grank_rank_select:')) {
+        if(!(await hasGrolePermission(interaction))) return interaction.reply({ content: '❌ Bu menüyü kullanmaya yetkin yok.', ephemeral: true });
+        const parts = interaction.customId.split(':');
+        const requesterId = parts[1];
+        const member = decodeURIComponent(parts[2] || '');
+        const rank = interaction.values[0];
+        const guild = await Guild.findOne({ guildId: interaction.guildId });
+        if (!guild || !guild.linkedHwids || guild.linkedHwids.length === 0) {
+            return interaction.update({ content: '❌ Bağlı RakSAMP istemcisi yok.', embeds: [], components: [] });
+        }
+        const hwid = guild.linkedHwids[0];
+        queueCommand(hwid, { type: 'grank', target: member, rank, requesterId: interaction.id });
+        setPendingInteraction(interaction.id, interaction);
+        setTimeout(() => { interaction.editReply({ content: '✅ İşlem tamamlandı.', embeds: [], components: [] }).catch(()=>{}); removePendingInteraction(interaction.id); }, 2*60*1000);
+        const embed = new EmbedBuilder()
+            .setTitle('✅ Gönderildi')
+            .setDescription(`\`/grank ${member} → ${rank}\` oyuna iletildi.`)
+            .setColor(0x00FF00);
+        return interaction.update({ embeds: [embed], components: [] });
+    }
     // Lisans Onaylama Butonları (yalnızca sahip; başkası basarsa uyar)
     if (interaction.isButton() && (interaction.customId.startsWith('approve_') || interaction.customId.startsWith('reject_'))) {
         if (interaction.user.id !== OWNER_ID || interaction.guildId !== OWNER_GUILD_ID) {
@@ -714,6 +845,38 @@ app.get('/api/welcome/state', async (req, res) => {
     });
 });
 
+// --- Kisi bazli hos geldin (B): hwid + hedef isim -> ozel mesaj ---
+app.post('/api/welcome/peruser', async (req, res) => {
+    const { hwid, target, message } = req.body || {};
+    if (!hwid || !target) return res.status(400).json({ success: false, message: "hwid ve target gerekli" });
+    const t = String(target).trim().slice(0, 64);
+    const msg = String(message || '').trim().slice(0, 255);
+    if (!msg) {
+        await db.execute('DELETE FROM welcome_per_user WHERE hwid=? AND target_name=?', [hwid, t]);
+        console.log(`WELCOME PER-USER silindi (hwid=${hwid.slice(0,8)}, target=${t})`);
+        return res.json({ success: true, deleted: true });
+    }
+    await db.execute('INSERT INTO welcome_per_user (hwid, target_name, custom_message, updated_at) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE custom_message=VALUES(custom_message), updated_at=VALUES(updated_at)', [hwid, t, msg, new Date()]);
+    console.log(`WELCOME PER-USER (hwid=${hwid.slice(0,8)}, target=${t}): ${msg}`);
+    return res.json({ success: true });
+});
+
+app.get('/api/welcome/peruser', async (req, res) => {
+    const hwid = String(req.query.hwid || '');
+    const target = String(req.query.target || '').trim();
+    if (!hwid || !target) return res.json({ success: false, message: '' });
+    const rows = await db.execute('SELECT custom_message FROM welcome_per_user WHERE hwid=? AND target_name=? LIMIT 1', [hwid, target]);
+    const msg = (rows && rows[0] && rows[0].custom_message) ? rows[0].custom_message : '';
+    return res.json({ success: true, message: msg });
+});
+
+app.get('/api/welcome/peruser/list', async (req, res) => {
+    const hwid = String(req.query.hwid || '');
+    if (!hwid) return res.json({ success: false, list: [] });
+    const rows = await db.execute('SELECT target_name, custom_message FROM welcome_per_user WHERE hwid=? ORDER BY target_name', [hwid]);
+    return res.json({ success: true, list: rows || [] });
+});
+
 // Discord'dan oyuna komut iletme (client /api/command/poll ile çeker)
 const { queueCommand, drainCommands } = require('./utils/commandOutbox');
 const { getPendingInteraction, removePendingInteraction } = require('./utils/pendingReplies');
@@ -723,6 +886,157 @@ app.get('/api/command/poll', async (req, res) => {
     const hwid = String(req.query.hwid || '');
     const commands = drainCommands(hwid);
     return res.json({ commands });
+});
+
+// --- /api/grole: Discord'dan grup rol degisikligi (paginated /grole otomasyonu) ---
+app.post('/api/grole', async (req, res) => {
+    const { hwid, target, role, requesterId } = req.body || {};
+    if (!hwid || !target || !role) return res.status(400).json({ error: 'hwid, target, role gerekli' });
+    const roleMap = { mem: 'Member', co: 'Co-Leader', memb: 'Member' };
+    const fullRole = roleMap[role] || role;
+    queueCommand(hwid, { type: 'grole', target, role: fullRole, requesterId: requesterId || '' });
+    console.log(`👤 [GROLE] Kuyruğa alındı: ${target} -> ${fullRole} (hwid=${hwid.slice(0,8)})`);
+    return res.json({ success: true });
+});
+
+// --- /api/grank: Discord'dan grup rank degisikligi (paginated /grank otomasyonu) ---
+app.post('/api/grank', async (req, res) => {
+    const { hwid, target, rank, requesterId } = req.body || {};
+    if (!hwid || !target || !rank) return res.status(400).json({ error: 'hwid, target, rank gerekli' });
+    queueCommand(hwid, { type: 'grank', target, rank, requesterId: requesterId || '' });
+    console.log(`🏷️ [GRANK] Kuyruğa alındı: ${target} -> ${rank} (hwid=${hwid.slice(0,8)})`);
+    return res.json({ success: true });
+});
+
+// --- /grole interaktif: uye listesini oyundan al, Discord select menu goster (butonlu sayfalama, rate-limit uyumlu) ---
+const groleMemberCache = new Map(); // requesterId -> { members, guildId, hwid }
+const groleSelections = new Map(); // userId -> { target, guildId, hwid }
+const grolePageCache = new Map(); // requesterId -> page
+
+function buildGroleMemberMessage(requesterId, page){
+    const cache = groleMemberCache.get(requesterId);
+    if(!cache) return null;
+    const members = cache.members;
+    const totalPages = Math.max(1, Math.ceil(members.length / 25));
+    const p = Math.max(0, Math.min(page, totalPages-1));
+    const slice = members.slice(p*25, p*25+25);
+    const options = slice.map(m => ({ label: m.slice(0,100), value: m.slice(0,100) }));
+    const select = new StringSelectMenuBuilder()
+        .setCustomId(`grole_member_select:${requesterId}`)
+        .setPlaceholder(`Üye seç (sayfa ${p+1}/${totalPages})`)
+        .addOptions(options.length ? options : [{ label: 'Üye bulunamadı', value: '__none__' }]);
+    const rows = [new ActionRowBuilder().addComponents(select)];
+    if(totalPages > 1){
+        const prev = new ButtonBuilder().setCustomId(`grole_page_prev:${requesterId}:${p}`).setLabel('◀ Önceki').setStyle(ButtonStyle.Secondary).setDisabled(p===0);
+        const next = new ButtonBuilder().setCustomId(`grole_page_next:${requesterId}:${p}`).setLabel('Sonraki ▶').setStyle(ButtonStyle.Secondary).setDisabled(p===totalPages-1);
+        const info = new ButtonBuilder().setCustomId('grole_page_info').setLabel(`${p+1}/${totalPages}`).setStyle(ButtonStyle.Secondary).setDisabled(true);
+        rows.push(new ActionRowBuilder().addComponents(prev, info, next));
+    }
+    const embed = new EmbedBuilder()
+        .setTitle('👥 Üye Seç')
+        .setDescription(`${members.length} üye — sayfa ${p+1}/${totalPages}. Menü 5 dk sonra kapanır.`)
+        .setColor(0x3498DB);
+    return { embeds: [embed], components: rows };
+}
+
+app.post('/api/grole/list', async (req, res) => {
+    const { requesterId, members, hwid, guildId } = req.body || {};
+    if (!requesterId || !Array.isArray(members)) return res.json({ success: false });
+    const interaction = getPendingInteraction(requesterId);
+    if (!interaction) {
+        console.log(`⚠️ [GROLE-LIST] Pending interaction bulunamadi: ${requesterId}`);
+        return res.json({ success: false });
+    }
+    const cleanMembers = members.map(m => String(m).replace(/\{[0-9a-fA-F]{6}\}/g,'').trim()).filter(Boolean).slice(0, 150);
+    groleMemberCache.set(requesterId, { members: cleanMembers, hwid: hwid || '', guildId: guildId || '' });
+    grolePageCache.set(requesterId, 0);
+    console.log(`👥 [GROLE-LIST] ${cleanMembers.length} uye alindi (req=${requesterId.slice(0,6)})`);
+    try {
+        const msg = buildGroleMemberMessage(requesterId, 0);
+        await interaction.editReply(msg);
+        // 5 dk sonra otomatik kapat (rate-limit dostu: tek edit)
+        setTimeout(async () => {
+            try{
+                const still = getPendingInteraction(requesterId);
+                if(still) await still.editReply({ content: '⏰ Menü süresi doldu.', embeds: [], components: [] }).catch(()=>{});
+                groleMemberCache.delete(requesterId);
+                grolePageCache.delete(requesterId);
+            }catch{}
+        }, 5*60*1000);
+    } catch(e){
+        console.error('GROLE-LIST edit hatasi:', e.message);
+        try{ await interaction.editReply({ content: `❌ Menü gösterilemedi: ${e.message}` }); }catch{}
+    }
+    return res.json({ success: true });
+});
+
+// --- /grank interaktif: rank listesi (grole gibi) ---
+const grankMemberCache = new Map();
+const grankPageCache = new Map();
+const grankRankCache = new Map(); // requesterId -> ranks
+
+function buildGrankMemberMessage(requesterId, page){
+    const cache = grankMemberCache.get(requesterId);
+    if(!cache) return null;
+    const members = cache.members;
+    const totalPages = Math.max(1, Math.ceil(members.length / 25));
+    const p = Math.max(0, Math.min(page, totalPages-1));
+    const slice = members.slice(p*25, p*25+25);
+    const options = slice.map(m => ({ label: m.slice(0,100), value: m.slice(0,100) }));
+    const select = new StringSelectMenuBuilder()
+        .setCustomId(`grank_member_select:${requesterId}`)
+        .setPlaceholder(`Üye seç (sayfa ${p+1}/${totalPages})`)
+        .addOptions(options.length ? options : [{ label: 'Üye bulunamadı', value: '__none__' }]);
+    const rows = [new ActionRowBuilder().addComponents(select)];
+    if(totalPages > 1){
+        const prev = new ButtonBuilder().setCustomId(`grank_page_prev:${requesterId}:${p}`).setLabel('◀ Önceki').setStyle(ButtonStyle.Secondary).setDisabled(p===0);
+        const next = new ButtonBuilder().setCustomId(`grank_page_next:${requesterId}:${p}`).setLabel('Sonraki ▶').setStyle(ButtonStyle.Secondary).setDisabled(p===totalPages-1);
+        const info = new ButtonBuilder().setCustomId('grank_page_info').setLabel(`${p+1}/${totalPages}`).setStyle(ButtonStyle.Secondary).setDisabled(true);
+        rows.push(new ActionRowBuilder().addComponents(prev, info, next));
+    }
+    const embed = new EmbedBuilder()
+        .setTitle('👥 Üye Seç (Grank)')
+        .setDescription(`${members.length} üye — sayfa ${p+1}/${totalPages}.`)
+        .setColor(0xE67E22);
+    return { embeds: [embed], components: rows };
+}
+
+app.post('/api/grank/list', async (req, res) => {
+    const { requesterId, members, hwid, guildId } = req.body || {};
+    if (!requesterId || !Array.isArray(members)) return res.json({ success: false });
+    const interaction = getPendingInteraction(requesterId);
+    if (!interaction) return res.json({ success: false });
+    const cleanMembers = members.map(m => String(m).replace(/\{[0-9a-fA-F]{6}\}/g,'').trim()).filter(Boolean).slice(0, 150);
+    grankMemberCache.set(requesterId, { members: cleanMembers, hwid: hwid||'', guildId: guildId||'' });
+    grankPageCache.set(requesterId, 0);
+    console.log(`👥 [GRANK-LIST] ${cleanMembers.length} uye alindi (req=${requesterId.slice(0,6)})`);
+    try{
+        const msg = buildGrankMemberMessage(requesterId, 0);
+        await interaction.editReply(msg);
+        setTimeout(async () => {
+            try{
+                const still = getPendingInteraction(requesterId);
+                if(still) await still.editReply({ content: '⏰ Menü süresi doldu.', embeds: [], components: [] }).catch(()=>{});
+                grankMemberCache.delete(requesterId);
+                grankPageCache.delete(requesterId);
+            }catch{}
+        }, 5*60*1000);
+    }catch(e){ console.error('GRANK-LIST edit hatasi:', e.message); }
+    return res.json({ success: true });
+});
+
+app.post('/api/grank/ranklist', async (req, res) => {
+    const { requesterId, ranks } = req.body || {};
+    if (!requesterId || !Array.isArray(ranks)) return res.json({ success: false });
+    const interaction = getPendingInteraction(requesterId);
+    // grank member seciminden sonra rank listesi geliyor — ayni interaction uzerinden rank secimi goster
+    // interaction zaten member seciminde update edildi, yeni bir deferred yok — editReply ile devam
+    // Bu endpoint dogrudan interaction.editReply yapamaz cunku member secimi interaction'i farkli (component interaction)
+    // Bu yuzden rank listesini cache'leyip member secim handler'i rank menuyu gosterecek
+    // Simdilik direkt cache'le
+    grankRankCache.set(requesterId, ranks.map(r=>String(r).replace(/\{[0-9a-fA-F]{6}\}/g,'').trim()).filter(Boolean));
+    console.log(`🏷️ [GRANK-RANKLIST] ${ranks.length} rank alindi (req=${requesterId.slice(0,6)})`);
+    return res.json({ success: true });
 });
 
 // --- SOCKET.IO REALTIME EVENTS ---
@@ -1000,6 +1314,21 @@ app.post('/api/bot/status', async (req, res) => {
     } catch (err) {
         console.error('BOT-STATUS hatasi:', err.message);
         return res.status(500).json({ success: false, message: err.message });
+    }
+});
+
+// Bot'un kayitli grup adini oku (acilis: dosya yerine DB'den). Yoksa bos doner,
+// client /stats ile ogrenip POST /api/bot/status uzerinden tekrar yazar.
+app.get('/api/bot/status', async (req, res) => {
+    const name = String(req.query.name || '').trim().slice(0, 64);
+    if (!name) return res.json({ success: false, groupName: '' });
+    try {
+        const rows = await db.execute('SELECT name, group_name FROM bots WHERE name=? LIMIT 1', [name]);
+        const r = (rows && rows[0]) || {};
+        return res.json({ success: true, groupName: r.group_name || '' });
+    } catch (err) {
+        console.error('BOT-STATUS GET hatasi:', err.message);
+        return res.status(500).json({ success: false, groupName: '', message: err.message });
     }
 });
 

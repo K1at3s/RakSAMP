@@ -1,18 +1,18 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+﻿const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const Guild = require('../models/Guild');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('link')
-        .setDescription('Bu sunucuyu RakSAMP HWID\'nize bağlar')
+        .setDescription('Bu sunucuyu RakSAMP HWID\'nize baglar')
         .addStringOption(o => o.setName('hwid')
-            .setDescription('RakSAMP\'ın gösterdiği HWID kodu (örn. BURHAN-XXXX)')
+            .setDescription('RakSAMP\'in gosterdigi HWID kodu (orn. BURHAN-XXXX)')
             .setRequired(true))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     async execute(interaction) {
         const hwid = interaction.options.getString('hwid').trim().toUpperCase();
         if (!hwid) {
-            return interaction.reply({ content: '❌ HWID boş olamaz.', ephemeral: true });
+            return interaction.reply({ content: '❌ HWID bos olamaz.', ephemeral: true });
         }
 
         const guild = await Guild.findOneAndUpdate(
@@ -22,8 +22,8 @@ module.exports = {
         );
 
         await interaction.reply(
-            `✅ Bu sunucu **\`${hwid}\`** HWID\'li RakSAMP istemcisine bağlandı.\n` +
-            `Bağlı HWID\'ler: ${guild.linkedHwids.map(h => `\`${h}\``).join(', ') || 'yok'}`
+            `✅ Bu sunucu **\`${hwid}\`** HWID\'li RakSAMP istemcisine baglandi.\n` +
+            `Bagli HWID\'ler: ${guild.linkedHwids.map(h => `\`${h}\``).join(', ') || 'yok'}`
         );
     }
 };
