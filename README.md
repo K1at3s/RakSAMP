@@ -1,17 +1,12 @@
-RakSAMP
-=======
-RakSAMP is a fake client and server for SA-MP, extended into a full-featured **UIF (United Islands Freeroam) group bot** with a Node.js/Discord backend.
+# RakSAMP — UIF Grup Botu
+
+RakSAMP, **UIF (United Islands Freeroam)** sunucusu için geliştirilmiş otomatik grup botudur. SA-MP fake client altyapısı üzerine kurulu, Node.js/Discord backend ile entegre çalışır.
 
 **Bot:** `hakixld` — otomatik zone tarama, savaş takibi, grup tag harvest, Discord entegrasyonu.
 
-**Authors:** jlfm, bartekdvd, P3ti.  
-**Special thanks:** balika011, .silent, n3ptun0.
-
 ---
 
-## 🎮 UIF Bot Özellikleri (v1.5+)
-
-RakSAMP, UIF sunucusunda otomatik çalışan bir grup botu olarak genişletildi:
+## 🎮 Özellikler
 
 - **Otomatik zone tarama** — flashing zone'ları tek tek teleport + `/gzinfo` ile öğrenir, sahiplik haritasını MySQL'e (`gangs` tablosu) kalıcı yazar. Normal tur bilinmeyen-only, her 4. tur tam kontrol.
 - **Grup tag harvest (`?zgrp`)** — `/groups` + `/gstats <ID>` zinciri ile eksik kısa tag'leri toplar, DB'ye yazar.
@@ -19,14 +14,18 @@ RakSAMP, UIF sunucusunda otomatik çalışan bir grup botu olarak genişletildi:
 - **Discord entegrasyonu** — grup chat köprüsü, `/grole` `/grank` interaktif menüler, per-user welcome, admin/war logları.
 - **UIF login fix** — GTA-client formatında dialog submit (BYTE uzunluk), tmp hesaba düşmeden gerçek hesaba giriş.
 - **Grup adı öğrenme** — `/stats` → "Group" butonu → ikinci diyalogdan doğru grup adı.
+- **Virtual world fix** — spawn menüsü "Freeroam" cevabı GTA-client formatında, bot gerçek freeroam'da spawn olur.
 
-### Kurulum
-1. `client/bin/RakSAMPClient.xml` — sunucu adresi, bot ismi, `normal_pos` spawn pozisyonu.
-2. `Discord/` — `bun .` ile backend başlat (MySQL `raksamp` DB + Discord bot token).
-3. `client/bin/RakSAMPClient.exe` — bot başlat (backend açık olmalı, kapalıysa client kapanır).
+---
 
-### Arka uç (Discord/backend)
-`Discord/server.js` — Express + Socket.IO + discord.js + MySQL. Endpoint'ler: `/api/handshake`, `/api/groups`, `/api/bot/status`, `/api/bot/toggles`, `/api/welcome/*`, `/api/grole`, `/api/grank`, `/api/grole/list`, `/api/command/poll`, `/api/groupchat/*` ve daha fazlası.
+## 🚀 Kurulum
+
+1. **MySQL** — `raksamp` veritabanı oluştur (`Discord/schema.sql`), tablolar otomatik kurulur.
+2. **Backend** — `Discord/` klasöründe `bun .` ile başlat (Discord bot token + MySQL ayarları `config.js`).
+3. **Client** — `client/bin/RakSAMPClient.exe` çalıştır:
+   - `RakSAMPClient.xml` — sunucu adresi, bot ismi (`hakixld`), `normal_pos` spawn pozisyonu.
+   - İlk açılışta konsola `/login <şifre>` yazarak hesaba gir (sunucu oturumu sonra hatırlar).
+   - Backend kapalıysa client kendini kapatır.
 
 ---
 
@@ -34,12 +33,19 @@ RakSAMP, UIF sunucusunda otomatik çalışan bir grup botu olarak genişletildi:
 
 Tüm komutlar grup chat'ine `?` önekiyle yazılır. `!` önekli mesajlar Discord'a iletilir.
 
+### Genel
 | Komut | Açıklama |
 |-------|----------|
 | `?help` | Komut listesi |
 | `?test` | Bot çalışıyor mu kontrol |
 | `?info` | Bot sürüm bilgisi |
 | `?disc` | Discord sunucu linki |
+| `?tr` / `?en` | Bot dili Türkçe/İngilizce |
+| `?m` | Test mesajı |
+
+### Oyuncu / İstatistik
+| Komut | Açıklama |
+|-------|----------|
 | `?ping` | Ping kontrol |
 | `?w` | War help (Discord @everyone, 5 dk cooldown) |
 | `?pl [id]` | Oyuncu istatistiği (packetloss/FPS/ping) |
@@ -48,27 +54,40 @@ Tüm komutlar grup chat'ine `?` önekiyle yazılır. `!` önekli mesajlar Discor
 | `?astats <id>` | Account istatistikleri |
 | `?alog <id>` | Admin log özeti |
 | `?az` | Serbest zone bilgisi |
+
+### Zone / Tarama
+| Komut | Açıklama |
+|-------|----------|
 | `?zlist` / `?zwho` | Bulunulan zone bilgisi (/gzinfo) |
 | `?zscan on/off` | Otomatik zone tarama aç/kapa |
 | `?zgo <#N\|tag\|isim>` | Zone'a ışınlan, 40 sn bekle, geri dön |
 | `?za` / `?zattack` | Zone saldırısı (/gz) |
 | `?zsnip [zone]` | Zone sniper (savaş bitince /gz, Co-Leader yetki) |
 | `?zf` | Flashing zone dağılımı + bilinmeyenleri tara |
+
+### Grup / Tag
+| Komut | Açıklama |
+|-------|----------|
 | `?zgrp on/off` | Grup tag harvest (tek seferlik) |
 | `?tagscan` | `?zgrp` alias |
 | `?tag <isim> <tag>` | Grup tag'ini elle kaydet (yerel + DB) |
+| `?gname` | Grup adını yeniden öğren |
+
+### Savaş
+| Komut | Açıklama |
+|-------|----------|
 | `?gzt on/off/time` | Savaş geri sayım duyuruları |
 | `?gz` / `?gz2` | Savaşa katıl / yedek çağır |
+| `?post <neden>` | Rol değişikliği gerekçesi (Discord embed) |
+
+### Ayarlar
+| Komut | Açıklama |
+|-------|----------|
 | `?greet on/off` | Welcome mesajları |
 | `?welcomemsg <isim> <mesaj>` | Per-user welcome mesajı (kişi bazlı) |
 | `?gm <mesaj>` | Global welcome mesajı alias |
-| `?gname` | Grup adını yeniden öğren |
-| `?tr` / `?en` | Bot dili Türkçe/İngilizce |
 | `?discordchat on/off` | Discord grup chat köprüsü |
 | `?guildid <id>` | HWID'i Discord sunucusuna bağla |
-| `?post <neden>` | Rol değişikliği gerekçesi (Discord embed) |
-| `?m` | Test mesajı |
-| `!<mesaj>` | Discord'a grup chat mesajı gönder |
 
 ---
 
@@ -92,63 +111,6 @@ Tüm komutlar grup chat'ine `?` önekiyle yazılır. `!` önekli mesajlar Discor
 
 ---
 
-## ⚙️ Fake Client (RakSAMP Çekirdeği)
-
-**Available runmodes:**
-* 0 = RCON mode
-* 1 = Bare mode (doesn't spawn)
-* 2 = Still mode (stays still at spawn position)
-* 3 = Normal mode (stays still at a position)
-* 4 = Follows a player
-* 5 = Follows a player with a vehicle
-
-**Available commands:**
-* `!exit` / `!quit`: exits client.
-* `!reconnect`: reconnects the server.
-* `!reload`: reloads settings.
-* `!runmode`: sets current runmode.
-* `!stats`: shows raknet statistics.
-* `!players`: shows list of players.
-* `!npcs`: show list of NPCs.
-* `!login`: login to RCON.
-* `!rcon`: send an RCON command.
-* `!goto`: go to players position.
-* `!gotocp`: go to the current checkpoint.
-* `!autogotocp`: toggle automatic checkpoint teleporter.
-* `!imitate`: change imitate name.
-* `!vlist`: shows list of vehicles.
-* `!vdeath`: send vehicle death notification.
-* `!fu`: send lost connection packet to server.
-* `!spawn`: spawns fake player.
-* `!pickup`: pick up a pickup by ID.
-* `!class`: select a class.
-* `!menusel`: selects an item from the GTA menu.
-* `!kill`: toggle fake kill flooder.
-* `!lag`: toggle server lagger.
-* `!spam`: toggle reconnect spammer.
-* `!joinflood`: toggle join flooder.
-* `!chatflood`: toggle chat flooder.
-* `!classflood`: toggle class selection flooder.
-* `!bulletflood`: flood the server with bullet sync packets.
-* `!weapon`: sets the current weapon in the fake player's hand.
-* `!selplayer`: sets the followed player's name.
-* `!selveh`: sets the fake player's vehicle.
-* `!pos`: sets the fake player's position.
-* `!follow`: sets the following offset.
-* `!pulsator`: pulse health & armor.
-* `!change_server`: connect to another server without restarting.
-* `!change_name`: change the fake player's name and reconnect.
-* `!dialogresponse`: send a dialog response.
-* `!logstatus`: show log status.
-* `!log`: toggle logging objects/pickups/textlabels/textdraws.
-* `!teleport`: show the teleport menu.
-* `!scmevent`: send SCM event.
-* `!fakekick`: send vehicle enter notification with invalid vehicle id.
-* `!seltd`: select a textdraw.
-* `!sendrates`: show sendrates.
-
----
-
 ## 🗄️ Veritabanı (MySQL `raksamp`)
 
 | Tablo | Açıklama |
@@ -164,12 +126,13 @@ Tüm komutlar grup chat'ine `?` önekiyle yazılır. `!` önekli mesajlar Discor
 
 ---
 
-## 🧩 Server (LUA scripting)
+## 📁 Proje Yapısı
 
-You can create LUA scripts for the server.
-
-**Limits:** Max players 1000, max vehicles 2000, max scripts 32.
-
-**Events:** `onScriptStart`, `onPlayerJoin`, `onPlayerSpawn`, `onPlayerCommand`, `onDialogResponse`, `onPlayerMessage` ve daha fazlası.
-
-**Functions:** `setPlayerPos`, `setPlayerPosFindZ`, `showPlayerDialog`, `sendPlayerChatMessage`, `giveWeapon`, `setPlayerHealth`, `sendDeathMessage`, `setGravity` ve daha fazlası.
+```
+client/           C++ client (RakSAMPClient.exe + XML config)
+  src/            netrpc.cpp, Security.cpp, cmds.cpp, main.cpp...
+  bin/            RakSAMPClient.exe, RakSAMPClient.xml, group_colors.txt
+raknet/           RakNet + SA-MP RPC katmanı (SAMPRPC.cpp)
+Discord/          Node.js backend (server.js, db.js, commands/, models/)
+CHANGELOG.md      Sürüm geçmişi
+```
