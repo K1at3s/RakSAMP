@@ -1,3 +1,18 @@
+# v1.5.1
+
+## Spawn / Konum
+- **Virtual world spawn fix**: spawn menüsü "Freeroam" cevabı GTA-client formatına (BYTE uzunluk) çevrildi — bot artık gerçek freeroam'da spawn oluyor (SF kulesi/virtual world'de kalmıyor).
+- **`?zgo` yerin dibi fix**: teleport Z 25 → 100 (yüksekten düşüp zemin Z'sine oturur).
+
+## Tag / Grup
+- **`?tag <isim> <tag>`**: grup tag'ini elle kaydet — yerel dosya + DB'ye isim eşleşmeli push (sunucu komutu göndermez). `?zgo GS` gibi tag ile zone'a gitme çalışır.
+- Tag boş/placeholder (tag==isim) gruplar `?zgrp`'ta yeniden taranır.
+
+## Karakter / Diğer
+- Welcome mesajı İngilizce şubeye `!` eklendi (grup chat'e düşer, normal chate değil).
+- Backend kapalıysa client kendini kapatır (60 sn kontrol) + temiz Türkçe uyarı.
+- README güncellendi: tüm bot komutları, Discord slash komutları, DB şeması.
+
 # v1.5.0
 
 ## UIF Login Fix (tmp hesap çözümü)
