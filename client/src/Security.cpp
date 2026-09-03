@@ -121,19 +121,19 @@ bool PerformSecurityHandshake(const std::string& serverUrl) {
     }
 
     std::cout << "-------------------------------------------\n";
-    std::cout << "-Øî [LISANSSIZ CIHAZ] Erisim Yetkiniz Yok!\n";
+    std::cout << "[LISANSSIZ CIHAZ] Erisim Yetkiniz Yok!\n";
     CopyToClipboard(g_myHWID);
-    std::cout << "­sôï HWID Pano'ya Kopyalandi: " << g_myHWID << "\n";
-    std::cout << "­sÆ¼ Discord uzerinden yoneticiye bu kodu iletin.\n";
+    std::cout << "[HWID] Panoya kopyalandi: " << g_myHWID << "\n";
+    std::cout << "[INFO] Discord uzerinden yoneticiye bu kodu iletin.\n";
     std::cout << "-------------------------------------------\n";
 
     // Backend ayakta degilse (Discord botu kapali) kullaniciya belirgin uyari goster
     if (!res || res->status != 200) {
         MessageBoxA(NULL,
-            "Discord botu kapal─▒ oldu─su i├gin RakSAMP a├g─▒lam─▒yor.\n\n"
-            "L├╝tfen Discord botunun (backend sunucusunun) ├gal─▒┼st─▒─s─▒ndan emin olun ve tekrar deneyin.\n\n"
-            "HWID pano'ya kopyaland─▒.",
-            "RakSAMP - Ba─slant─▒ Hatas─▒",
+            "Discord botu kapali oldugu icin RakSAMP acilamiyor.\n\n"
+            "Lutfen Discord botunun (backend sunucusunun) calistigindan emin olun ve tekrar deneyin.\n\n"
+            "HWID panoya kopyalandi.",
+            "RakSAMP - Baslanti Hatasi",
             MB_OK | MB_ICONERROR);
     }
 

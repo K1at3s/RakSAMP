@@ -109,7 +109,7 @@ static int g_zoneCount = 0;
 
 // ?zgo: bot zone'a isinlanip 40 sn bekler, sonra eski pozisyonuna doner.
 #define ZGO_STAY_MS 40000
-#define ZGO_TELEPORT_Z 25.0f  // yer seviyesine yakin: cok yuksek Z'de sunucu "zonede degilsin" der
+#define ZGO_TELEPORT_Z 100.0f // yuksekten dus, zemin Z'sine otur (sabit 25 bazi bolgelerde yerin dibinde kaliyor)
 static bool g_zgoActive = false;            // isinlama + bekleme aktif mi
 static DWORD g_zgoReturnTick = 0;           // geri donus zamani
 static float g_zgoReturnPos[3] = {0, 0, 0}; // donulecek (spawn) pozisyon
@@ -1197,6 +1197,32 @@ static void SyncZscanFromDb()
 static DWORD g_lastDbSyncTick = 0;
 void ProcessDbSync(){
 	if(!g_isEngineActive || g_sessionToken.empty()) return;
+	// BACKEND SAGLIK KONTROLU: Discord botu (backend) calisma sirasinda kapanirsa
+	// client de kendini kapatir (60 sn'de bir kontrol). Backend'siz bot islevsizdir.
+	static DWORD s_lastBackendCheck = 0;
+	if(s_lastBackendCheck == 0 || GetTickCount() - s_lastBackendCheck >= 60000)
+	{
+		s_lastBackendCheck = GetTickCount();
+		bool bAlive = false;
+		try
+		{
+			httplib::Client cli(g_szBackendBase);
+			cli.set_connection_timeout(3);
+			auto res = cli.Get("/api/bot/status");
+			if(res && res->status == 200) bAlive = true;
+		}
+		catch(...) {}
+		if(!bAlive)
+		{
+			Log("[BACKEND] Discord botu (backend) yanit vermiyor, client kapatiliyor.");
+			MessageBoxA(NULL,
+				"Discord botu (backend sunucusu) calismayi durdurdu.\n\n"
+				"RakSAMP kapatiliyor. Backend'i yeniden baslatin ve tekrar deneyin.",
+				"RakSAMP - Baglanti Kesildi",
+				MB_OK | MB_ICONERROR);
+			ExitProcess(0);
+		}
+	}
 	// Login beklentisi main.cpp ana dongusunde yonetilir (g_loginPending iken bu
 	// fonksiyon cagrilmaz). Acilis: BUGUNKU grup+tag+zone haritasini DB'den geri y-╝kle (bir kez, 5 sn
 	// aralikli retry). Bu BASARILI OLANA KADAR SyncGroupColorsToDb kilitli -
@@ -2647,7 +2673,7 @@ void ClientMessage(RPCParameters *rpcParams)
 					}
 					else
 					{
-						sprintf_s(szGreet, sizeof(szGreet), LM("!Tekrar hos geldin %s!", " Welcome back %s!"), szName);
+						sprintf_s(szGreet, sizeof(szGreet), LM("!Tekrar hos geldin %s!", "!Welcome back %s!"), szName);
 					}
 				}
 g_bridgeSuppressEcho++;
@@ -3313,15 +3339,52 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				else
 					Log("[POST] Son rol degisikligi yok, Discord'a embed gonderilemedi.");
 			}
-			// --- ?tag <tag> <yeni> : grup zone tagini duzelt (sunucuya ilet) ---
-			// (?tagscan ayri komuttur: buraya takilmamasi icin hari-g tutulur.)
+			// --- ?tag <isim> <tag> : grup tagini elle kaydet (yerel + DB isim eslesmeli) ---
+			// (?tagscan ayri komuttur: buraya takilmamasi icin haric tutulur.)
 			else if(!strncmp(pGroupMsg, "?tag", 4) && strncmp(pGroupMsg, "?tagscan", 8) != 0
 				&& (pGroupMsg[4] == ' ' || pGroupMsg[4] != '\0'))
 			{
 				Log("[TAG] ?tag yakalandi.");
-				char szCmd[128];
-				sprintf_s(szCmd, sizeof(szCmd), "/groupzonetag %s", pGroupMsg + 4);
-				sendServerCommand(szCmd);
+				// Yerel + DB'ye isim eslesmeli tag kaydet: "?tag <isim> <tag>"
+				const char *pArg = pGroupMsg + 4;
+				while(*pArg == ' ') pArg++;
+				const char *pSp = strchr(pArg, ' ');
+				if(pSp)
+				{
+					char szName[80] = {0}, szTag[32] = {0};
+					size_t nN = pSp - pArg;
+					if(nN < 80)
+					{
+						memcpy(szName, pArg, nN); szName[nN] = 0;
+						const char *pT = pSp + 1; while(*pT == ' ') pT++;
+						strncpy_s(szTag, sizeof(szTag), pT, sizeof(szTag) - 1);
+						StripColorCodes(szName);
+						NormalizeGroupName(szName);
+						StripColorCodes(szTag);
+						if(szName[0] && szTag[0])
+						{
+							int gi = FindGroupColorByName(szName);
+							if(gi < 0 && g_groupColorCount < MAX_GROUP_COLORS)
+							{
+								gi = g_groupColorCount++;
+								strncpy_s(g_groupColors[gi].szName, sizeof(g_groupColors[0].szName),
+									szName, sizeof(g_groupColors[0].szName) - 1);
+							}
+							if(gi >= 0)
+							{
+								strncpy_s(g_groupColors[gi].szTag, sizeof(g_groupColors[0].szTag),
+									szTag, sizeof(g_groupColors[0].szTag) - 1);
+								SaveGroupColors();
+								SyncGroupColorsToDb(); // DB'ye isimle push (elle kayit)
+								Log("[TAG] '%s' -> '[%s]' yerel + DB'ye kaydedildi.", szName, szTag);
+								g_bridgeSuppressEcho++;
+								char szOk[96];
+								sprintf_s(szOk, sizeof(szOk), "!%s -> [%s] kaydedildi.", szName, szTag);
+								sendChat(szOk);
+							}
+						}
+					}
+				}
 			}
 			// --- ?zlist / ?zwho : bulundugu zone bilgisi -åÆ /gzinfo (hangi grup, ne zaman bosalir) ---
 			else if((!strncmp(pGroupMsg, "?zlist", 6) && (pGroupMsg[6] == '\0' || pGroupMsg[6] == ' '))
@@ -3870,14 +3933,13 @@ void SpawnConfirmed(RPCParameters *rpcParams)
 	bIsSpectating = 0;
 	g_zoneScanWaitStart = GetTickCount(); // oto-tarama sayaci: 30 sn sonra ilk tarama
 
-	if(!g_frSentOnce)
-	{
-		g_frSentOnce = true;
-		Log("[SPAWN] Sunucu spawn onayi (RPC_Spawn) alindi, /fr (freeroam) gonderiliyor.");
-		// OYUNCU ADI KONTROL: tmp hesapta mi degil mi — kesin teshis.
-		Log("[SPAWN] Kendi oyuncu adim: '%s' (XML nickname: '%s')", playerInfo[g_myPlayerID].szPlayerName, g_szNickName);
-		sendServerCommand((char *)"/fr");
-	}
+	// Spawn onayi (RPC_Spawn) alindi: /fr'yi GONDER. Spawn menusu secimi zaten
+	// bir kez /fr gonderdi; kullanici istegi: spawn olduktan sonra da /fr tekrar
+	// gonderilsin (virtual map'te kaliyorsa freeroam'a gecmesi icin). Custom pos
+	// /pos ile GONDERILMEZ — sadece /fr, sonrasinda normal akis devam eder.
+	Log("[SPAWN] Sunucu spawn onayi (RPC_Spawn) alindi, /fr (freeroam) tekrar gonderiliyor.");
+	Log("[SPAWN] Kendi oyuncu adim: '%s' (XML nickname: '%s')", playerInfo[g_myPlayerID].szPlayerName, g_szNickName);
+	sendServerCommand((char *)"/fr");
 
 	// Reconnect + spawn: tarama aktifse KALDIGI ZONEDEN DEVAM (o zone'a yeniden
 	// teleport + /gzinfo). Scan state'i (queue/idx) hafizada korunur. Mute-bayragi
@@ -4243,22 +4305,30 @@ void ScrDialogBox(RPCParameters *rpcParams)
 				{
 					iItem = iRow - iHeaderRows;
 					Log("[SPAWNMENU] 'Freeroam' secildi (ListItem %d).", iItem);
-					sendDialogResponse(sampDialog.wDialogID, 1, iItem, (char *)"Freeroam");
+					// SPAWN MENUSU CEVABI: GTA client ile BIREBIR AYNI format (BYTE uzunluk).
+					// sendDialogResponse WORD kullaniyor — sunucu BYTE bekledigi icin "Freeroam"
+					// secimi islenmiyor, bot virtual world'de kaliyordu. (Login'de ayni sorun
+					// cozuldu; spawn menusu de ayni formatla gonderilir.)
+					{
+						const char *szSel = "Freeroam";
+						BYTE bSelLen = (BYTE)strlen(szSel);
+						RakNet::BitStream bsSel;
+						bsSel.Write((uint16_t)sampDialog.wDialogID);
+						bsSel.Write((uint8_t)1);
+						bsSel.Write((uint16_t)iItem);
+						bsSel.Write((uint8_t)bSelLen);
+						bsSel.Write(szSel, bSelLen);
+						pRakClient->RPC(&RPC_DialogResponse, &bsSel, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
+					}
 					sampDialog.iIsActive = 0;
 					g_dwSpawnMenuHandled = GetTickCount();
 					bSelected = true;
 
-					// Freeroam secimi cevaplandigina gore /fr'yi tek sefer gonder.
-					// UIF RPC_Spawn (52) gondermez (SpawnConfirmed tetiklenmez); guvenilir an
-					// menunun cevaplandigi andir. g_frSentOnce bayragi toplam 1 gonderim
-					// garantiler (cmd mute yok). RELIABLE_ORDERED sira garantisi sayesinde
-					// sunucu once menu cevabini, sonra /fr'yi isler.
-					if(!g_frSentOnce)
-					{
-						g_frSentOnce = true;
-						Log("[SPAWN] Spawn menusu 'Freeroam' cevaplandi, /fr (freeroam) gonderiliyor.");
-						sendServerCommand((char *)"/fr");
-					}
+					// Freeroam secimi cevaplandigina gore /fr'yi gonder.
+					// VIRTUAL WORLD FIX: BYTE formatli cevap + /fr — bot gercek freeroam'da
+					// spawn olur (SF kulesi/virtual world'de kalmaz).
+					Log("[SPAWN] Spawn menusu 'Freeroam' cevaplandi, /fr (freeroam) gonderiliyor.");
+					sendServerCommand((char *)"/fr");
 					break;
 				}
 			}
