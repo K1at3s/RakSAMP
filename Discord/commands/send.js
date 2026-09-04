@@ -1,11 +1,13 @@
-﻿const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const Guild = require('../models/Guild');
 const { queueCommand } = require('../utils/commandOutbox');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('send')
+        .setNameLocalizations({ tr: 'gonder', 'en-US': 'send' })
         .setDescription('Oyun icindeki RakSAMP istemcisine komut/sohbet mesaji iletir')
+        .setDescriptionLocalizations({ tr: 'Oyun içindeki RakSAMP istemcisine komut/sohbet mesajı iletir', 'en-US': 'Sends a command/chat message to the in-game RakSAMP client' })
         .addStringOption(o => o.setName('komut')
             .setDescription('Iletilecek komut (orn. ?au Merhaba, /gstats, selam)')
             .setRequired(true))

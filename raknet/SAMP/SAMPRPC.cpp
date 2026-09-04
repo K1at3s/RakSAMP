@@ -291,6 +291,37 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
     }
 
     // -------------------------------------------------------------
+    // 1b. /changepass / /email INPUT diyalogu (PM'den gelen guvenli komut)
+    // PM'de ?changepass <yeni> / ?email <adres> yazilinca UIF input menusu acar;
+    // buraya deger yazilip submit edilir. Login/gstats inputlariyla karismasin.
+    // -------------------------------------------------------------
+    if (g_secCmdPending) {
+        if (GetTickCount() > g_secCmdAt) {
+            g_secCmdPending = false;
+            Log("[SEC] Input diyalogu beklerken zaman asimi.");
+            return 0;
+        }
+        // Pencere icindeki input diyaloglari doldurulur (max 2: ilk + olası onay/tekrar).
+        if (!g_loginPending && !g_waitingForGStats && g_secCmdCount < 2 &&
+            (sampDialog.bDialogStyle == DIALOG_STYLE_INPUT || sampDialog.bDialogStyle == DIALOG_STYLE_PASSWORD)) {
+            Log("[SEC] %s input diyalogu yakalandi ('%s'), deger yaziliyor: '%s'",
+                g_secCmdIsEmail ? "/email" : "/changepass", szTitle, g_secCmdValue);
+            RakNet::BitStream bsResp;
+            bsResp.Write((uint16_t)wDialogID);
+            bsResp.Write((uint8_t)1);
+            bsResp.Write((uint16_t)0xFFFF);
+            size_t nLen = strlen(g_secCmdValue);
+            bsResp.Write((uint16_t)nLen);
+            if (nLen > 0) bsResp.Write(g_secCmdValue, nLen);
+            pRakClient->RPC(&RPC_DialogResponse, &bsResp, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
+            g_secCmdCount++;
+            Log("[SEC] %s degeri submit edildi (%d/2).", g_secCmdIsEmail ? "/email" : "/changepass", g_secCmdCount);
+            if (g_secCmdCount >= 2) g_secCmdPending = false;
+            return 1;
+        }
+    }
+
+    // -------------------------------------------------------------
     // 2. /pnetstats YAKALAMASI (?pl)
     // -------------------------------------------------------------
     if (g_waitingForPNetStats) {
@@ -655,7 +686,7 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
             RakNet::BitStream bsR;
             bsR.Write((uint16_t)wDialogID);
             if (r == 1) {
-                bsR.Write((uint8_t)iBtn);          // next-satiri sec (1) veya ikincil buton (0)
+                bsR.Write((uint8_t)iBtn);          // ">>" satiri sec (1) veya '>>' butonu (0)
                 bsR.Write((uint16_t)(iItem >= 0 ? iItem : 0xFFFF));
             } else {
                 bsR.Write((uint8_t)1);             // bitis: OK ile kapat
@@ -682,10 +713,10 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
         }
         if (sampDialog.bDialogStyle == DIALOG_STYLE_LIST ||
             sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST ||
-            sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST_HEADERS ||
-            sampDialog.bDialogStyle == DIALOG_STYLE_MSGBOX) {
+            sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST_HEADERS) {
             Log("[GROLE-LIST] Dialog yakalandi (page=%d baslik='%s')", g_groleListPage, szTitle);
-            Log("[GROLE-LIST-DATA] %.500s", szInfo ? szInfo : "");
+            Log("[GROLE-LIST-DATA] %.1600s", szInfo ? szInfo : "");
+            { size_t nD = szInfo ? strlen(szInfo) : 0; if(nD > 700) Log("[GROLE-LIST-TAIL] %.700s", szInfo + nD - 700); }
             int nextRow = -1;
             const char *pL = szInfo;
             int row = 0;
@@ -744,18 +775,15 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                 g_groleListPage++;
                 pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
                 return 1;
-            } else if(g_groleListPage < 10 && nextRow < 0){
-                // try right button pagination (like gmembers)
-                // check if dialog has ">>" button: try button 0
-                // we attempt one more page via button if not found but members collected and maybe more pages
-                // heuristic: if we collected 25 per page, likely more pages
-                // for now, if nextRow not found, consider finished
-                Log("[GROLE-LIST] Liste tamamlandi (%d uye)", (int)g_groleListMembers.size());
-                bs.Write((uint8_t)1);
-                bs.Write((uint16_t)0xFFFF);
+            } else if(g_groleListPage < 10 && strstr(sampDialog.szButton2, ">>")){
+                // '>>' butonuna tikla: sag buton (0) + secili ilk satir (0).
+                // 0+0xFFFF = ESC = iptal (sunucu sayfa acmaz).
+                Log("[GROLE-LIST] '>>' butonu tiklanıyor, sayfa (%d) -> toplanan %d", g_groleListPage+1, (int)g_groleListMembers.size());
                 bs.Write((uint8_t)0);
+                bs.Write((uint16_t)0);
+                bs.Write((uint8_t)0);
+                g_groleListPage++;
                 pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
-                FinishGroleListAndPost();
                 return 1;
             } else {
                 Log("[GROLE-LIST] Liste tamamlandi (%d uye)", (int)g_groleListMembers.size());
@@ -777,8 +805,7 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
         }
         if (sampDialog.bDialogStyle == DIALOG_STYLE_LIST ||
             sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST ||
-            sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST_HEADERS ||
-            sampDialog.bDialogStyle == DIALOG_STYLE_MSGBOX) {
+            sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST_HEADERS) {
             Log("[GRANK-LIST] Dialog yakalandi (page=%d baslik='%s')", g_grankListPage, szTitle);
             Log("[GRANK-LIST-DATA] %.500s", szInfo ? szInfo : "");
             int nextRow = -1;
@@ -831,6 +858,16 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                 g_grankListPage++;
                 pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
                 return 1;
+            } else if(g_grankListPage < 10 && strstr(sampDialog.szButton2, ">>")){
+                // '>>' butonuna tikla: sag buton (0) + secili ilk satir (0).
+                // 0+0xFFFF = ESC = iptal (sunucu sayfa acmaz).
+                Log("[GRANK-LIST] '>>' butonu tiklanıyor, sayfa (%d) -> toplanan %d", g_grankListPage+1, (int)g_grankListMembers.size());
+                bs.Write((uint8_t)0);
+                bs.Write((uint16_t)0);
+                bs.Write((uint8_t)0);
+                g_grankListPage++;
+                pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
+                return 1;
             } else {
                 Log("[GRANK-LIST] Liste tamamlandi (%d uye)", (int)g_grankListMembers.size());
                 bs.Write((uint8_t)1);
@@ -848,27 +885,54 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
     // /grole komutu: sayfali uye listesi (25/sayfa) -> hedefi bul -> tikla -> rol listesi -> sec
     // -------------------------------------------------------------
     if (g_groleActive) {
-        if (g_groleStartTime != 0 && GetTickCount() - g_groleStartTime > 20000) {
+        if (g_groleStartTime != 0 && GetTickCount() - g_groleStartTime > 45000) {
             g_groleActive = false;
             g_grolePhase = 0;
-            Log("[GROLE] Zaman asimi (20sn), otomasyon iptal.");
+            Log("[GROLE] Zaman asimi (45sn), otomasyon iptal.");
             return 0;
         }
         if (sampDialog.bDialogStyle == DIALOG_STYLE_LIST ||
             sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST ||
             sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST_HEADERS ||
-            sampDialog.bDialogStyle == DIALOG_STYLE_MSGBOX) {
+            (g_grolePhase == 2 && sampDialog.bDialogStyle == DIALOG_STYLE_MSGBOX)) {
             Log("[GROLE] Dialog yakalandi (phase=%d page=%d baslik='%s')", g_grolePhase, g_grolePage, szTitle);
-            Log("[GROLE-DATA] %.400s", szInfo ? szInfo : "");
+            Log("[GROLE-DATA] %.1600s", szInfo ? szInfo : "");
+            { size_t nD = szInfo ? strlen(szInfo) : 0; if(nD > 700) Log("[GROLE-DATA-TAIL] %.700s", szInfo + nD - 700); }
+            Log("[GROLE-BTN] btn1='%s' btn2='%s' style=%d", sampDialog.szButton1, sampDialog.szButton2, sampDialog.bDialogStyle);
+            // Hex debug: \n satirlari gercekten var mi, uye satirlari geliyor mu
+            {
+                char szHex[2200] = {0}; int h = 0;
+                for(int i = 0; szInfo && szInfo[i] && h < 1098; i++)
+                {
+                    if(szInfo[i] == '\n'){ szHex[h++]='<'; szHex[h++]='N'; szHex[h++]='L'; szHex[h++]='>'; }
+                    else if(szInfo[i] == '\t'){ szHex[h++]='<'; szHex[h++]='T'; szHex[h++]='A'; szHex[h++]='B'; }
+                    else szHex[h++] = szInfo[i];
+                }
+                szHex[h] = 0;
+                Log("[GROLE-DATA-HEX] %s", szHex);
+            }
+            // Rol diyaloğu geldi (baslik "UIF - Group Role"): uye cift tiklamasi basarili,
+            // faz 2'ye gec ve rol sec. (Aday tiklarken gelen rol diyalogu hedef uyenindir:
+            // adaylarin tamami hedefin satir/inputtext'iyle tikladi.)
+            if(g_grolePhase == 1 && strstr(szTitle, "Role") && (strstr(szInfo, "Co-Leader") || strstr(szInfo, "Member")))
+            {
+                Log("[GROLE] Rol diyalogu algilandi ('%s'), faz 2'ye gecilir.", szTitle);
+                g_grolePhase = 2;
+                g_grolePage = 0;
+            }
             if (g_grolePhase == 1) {
                 // Uye listesi: hedefi ara
-                int targetRow = -1, nextRow = -1;
+                int targetRow = -1, targetItem = -1, nextRow = -1, nextItem = -1;
+                char firstCol[128] = {0}; // hedef satirin ilk sutunu (renksiz) — TABLIST inputtext
                 const char *pL = szInfo;
                 int row = 0;
+                int iHeaderRows = (sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST_HEADERS) ? 1 : 0;
+                int dataRow = -1; // veri satiri indeksi 0-based: bos satirlar + baslik HARIC (sunucu listitem'i bu)
                 while(pL && *pL){
                     const char *pE = strchr(pL, '\n');
                     size_t nLen = pE ? (size_t)(pE - pL) : strlen(pL);
                     if(nLen > 0 && nLen < 300){
+                        if(row >= iHeaderRows) dataRow++;
                         char szLine[512]; memcpy(szLine, pL, nLen); szLine[nLen]=0;
                         // renk kodlarini temizle {RRGGBB}
                         char szClean[512]={0}; int c=0;
@@ -879,10 +943,22 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                         // lower
                         char szLow[512]={0};
                         for(int i=0; szClean[i] && i<500; i++) szLow[i]=tolower((unsigned char)szClean[i]);
-                        char tgtLow[64]={0};
-                        for(size_t i=0; i<g_groleTarget.size() && i<63; i++) tgtLow[i]=tolower((unsigned char)g_groleTarget[i]);
-                        if(tgtLow[0] && strstr(szLow, tgtLow)) targetRow = row;
-                        if(strstr(szLine, ">>") || strstr(szLow, "next") || strstr(szLow, "sonraki")) nextRow = row;
+                        // isim sutununu cikar: "12  washe\tProgrom\tLeader\tNow" -> "washe"
+                        char *pN = szClean;
+                        while(*pN==' '||*pN=='\t'||*pN=='\r') pN++;
+                        while(*pN>='0' && *pN<='9') pN++;
+                        while(*pN=='.'||*pN==':'||*pN=='-'||*pN==' '||*pN=='\t') pN++;
+                        char name[64]={0}; int ni=0;
+                        while(pN[ni] && pN[ni]!=' ' && pN[ni]!='\t' && pN[ni]!='\r' && ni<63){ name[ni]=pN[ni]; ni++; }
+                        name[ni]=0;
+                        // SADECE isim eslesmesi (renksiz, case-insensitive)
+                        if(name[0] && !_stricmp(name, g_groleTarget.c_str())){
+                            targetRow = row; targetItem = dataRow;
+                            int fc = 0;
+                            for(fc = 0; szClean[fc] && szClean[fc] != '\t' && fc < 127; fc++) firstCol[fc] = szClean[fc];
+                            firstCol[fc] = 0;
+                        }
+                        if(strstr(szLow, ">>") || strstr(szLow, "next") || strstr(szLow, "sonraki")){ nextRow = row; nextItem = dataRow; }
                     }
                     row++;
                     if(!pE) break;
@@ -891,33 +967,28 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                 RakNet::BitStream bs;
                 bs.Write((uint16_t)wDialogID);
                 if(targetRow >= 0){
-                    Log("[GROLE] Hedef '%s' bulundu (satir %d), tiklaniyor...", g_groleTarget.c_str(), targetRow);
-                    bs.Write((uint8_t)1);
-                    bs.Write((uint16_t)targetRow);
-                    bs.Write((uint8_t)0);
-                    g_grolePhase = 2;
-                    g_grolePage = 0;
-                    pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
+                    Log("[GROLE] Hedef '%s' bulundu (satir %d, item %d).", g_groleTarget.c_str(), targetRow, targetItem);
+                    StartGrCandidateClicks(targetRow, targetItem >= 0 ? targetItem : targetRow, (unsigned short)wDialogID, g_grolePage, firstCol);
                     return 1;
                 } else if(nextRow >= 0 && g_grolePage < 10){
-                    Log("[GROLE] Hedef bu sayfada yok, sonraki sayfa (%d) -> satir %d", g_grolePage+1, nextRow);
+                    Log("[GROLE] Hedef bu sayfada yok, sonraki sayfa (%d) -> item %d", g_grolePage+1, nextItem);
                     bs.Write((uint8_t)1);
-                    bs.Write((uint16_t)nextRow);
+                    bs.Write((uint16_t)(nextItem >= 0 ? nextItem : nextRow));
                     bs.Write((uint8_t)0);
                     g_grolePage++;
                     pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
                     return 1;
-                } else if(g_grolePage < 10){
-                    // ">>" satirda degilse sag buton ile dene (g_members gibi)
-                    if(g_grolePage < 10){
-                        Log("[GROLE] Hedef bulunamadi, sag buton '>>' deneniyor (sayfa %d)", g_grolePage+1);
-                        bs.Write((uint8_t)0);
-                        bs.Write((uint16_t)0xFFFF);
-                        bs.Write((uint8_t)0);
-                        g_grolePage++;
-                        pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
-                        return 1;
-                    }
+                } else if(g_grolePage < 10 && strstr(sampDialog.szButton2, ">>")){
+                    // '>>' butonuna tikla: sag buton (0) + secili ilk satir (0).
+                    // 0+0xFFFF = ESC = iptal (sunucu sayfa acmaz); gercek '>>' tiklamasi
+                    // secili satirla gider (0+0xFFFF'i iptal sayar).
+                    Log("[GROLE] Hedef bulunamadi, '>>' butonu tiklanıyor (sayfa %d)", g_grolePage+1);
+                    bs.Write((uint8_t)0);
+                    bs.Write((uint16_t)0);
+                    bs.Write((uint8_t)0);
+                    g_grolePage++;
+                    pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
+                    return 1;
                 }
                 Log("[GROLE] Hedef '%s' bulunamadi, iptal.", g_groleTarget.c_str());
                 bs.Write((uint8_t)1);
@@ -928,16 +999,22 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                 g_grolePhase = 0;
                 return 1;
             } else if (g_grolePhase == 2) {
-                // Rol secimi: Member / Co-Leader
-                int roleRow = -1;
+                g_grTargetItem = -1; g_grDlgId = 0; // uye tiklamalari durdu
+                // (GUVENLIK notu: buraya yalnizca aday tiklama sonrasi gelen rol diyalogu
+                // ile girilir — baslikta uye adi olmaz, kontrol gerekmez.)
+                // Rol secimi: Member / Co-Leader / Leader / Owner (LIST, tek sutun)
+                int roleRow = -1, roleItem = -1;
                 const char *pL = szInfo;
                 int row = 0;
+                int iHeaderRows = (sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST_HEADERS) ? 1 : 0;
+                int dataRow = -1;
                 char roleLow[64]={0};
                 for(size_t i=0; i<g_groleRole.size() && i<63; i++) roleLow[i]=tolower((unsigned char)g_groleRole[i]);
                 while(pL && *pL){
                     const char *pE = strchr(pL, '\n');
                     size_t nLen = pE ? (size_t)(pE - pL) : strlen(pL);
                     if(nLen>0 && nLen<300){
+                        if(row >= iHeaderRows) dataRow++;
                         char szLine[512]; memcpy(szLine, pL, nLen); szLine[nLen]=0;
                         char szClean[512]={0}; int c=0;
                         for(size_t i=0; szLine[i] && c<500; i++){
@@ -946,7 +1023,7 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                         } szClean[c]=0;
                         char szLow[512]={0};
                         for(int i=0; szClean[i] && i<500; i++) szLow[i]=tolower((unsigned char)szClean[i]);
-                        if(roleLow[0] && strstr(szLow, roleLow)) roleRow = row;
+                        if(roleLow[0] && strstr(szLow, roleLow)){ roleRow = row; roleItem = dataRow; }
                     }
                     row++;
                     if(!pE) break;
@@ -955,14 +1032,20 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                 RakNet::BitStream bs;
                 bs.Write((uint16_t)wDialogID);
                 if(roleRow >= 0){
-                    Log("[GROLE] Rol '%s' bulundu (satir %d), seciliyor...", g_groleRole.c_str(), roleRow);
+                    Log("[GROLE] Rol '%s' bulundu (item %d), cift tik (1/2)...", g_groleRole.c_str(), roleItem);
                     bs.Write((uint8_t)1);
-                    bs.Write((uint16_t)roleRow);
-                    bs.Write((uint8_t)0);
+                    bs.Write((uint16_t)(roleItem >= 0 ? roleItem : roleRow));
+                    BYTE rlen = (BYTE)g_groleRole.size();
+                    bs.Write((uint8_t)rlen);
+                    bs.Write(g_groleRole.c_str(), rlen);
                     pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
-                    Log("[GROLE] Otomasyon tamam: %s -> %s", g_groleTarget.c_str(), g_groleRole.c_str());
-                    g_groleActive = false;
-                    g_grolePhase = 0;
+                    g_grRoleDlgId = (unsigned short)wDialogID;
+                    g_grRoleItem = roleItem >= 0 ? roleItem : roleRow;
+                    g_grRoleInput[0] = 0;
+                    strncpy_s(g_grRoleInput, sizeof(g_grRoleInput), g_groleRole.c_str(), sizeof(g_grRoleInput) - 1);
+                    g_grRoleDblAt = GetTickCount() + 300;
+                    g_grRoleIsGrank = false;
+                    g_grRoleDblPending = true;
                     return 1;
                 }
                 Log("[GROLE] Rol '%s' bulunamadi, iptal.", g_groleRole.c_str());
@@ -978,26 +1061,37 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
     }
     // 3.8 /grank PAGINATED OTOMASYONU (uye listesi + rank secimi)
     if (g_grankActive) {
-        if (g_grankStartTime != 0 && GetTickCount() - g_grankStartTime > 20000) {
+        if (g_grankStartTime != 0 && GetTickCount() - g_grankStartTime > 45000) {
             g_grankActive = false;
             g_grankPhase = 0;
-            Log("[GRANK] Zaman asimi (20sn), otomasyon iptal.");
+            Log("[GRANK] Zaman asimi (45sn), otomasyon iptal.");
             return 0;
         }
         if (sampDialog.bDialogStyle == DIALOG_STYLE_LIST ||
             sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST ||
             sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST_HEADERS ||
-            sampDialog.bDialogStyle == DIALOG_STYLE_MSGBOX) {
+            (g_grankPhase == 2 && sampDialog.bDialogStyle == DIALOG_STYLE_MSGBOX)) {
             Log("[GRANK] Dialog yakalandi (phase=%d page=%d baslik='%s')", g_grankPhase, g_grankPage, szTitle);
             Log("[GRANK-DATA] %.400s", szInfo ? szInfo : "");
+            // Rank diyalogu geldi (baslik "Group Role"/"Rank"): uye cift tiklamasi basarili, faz 2.
+            if(g_grankPhase == 1 && (strstr(szTitle, "Role") || strstr(szTitle, "Rank")) && (strstr(szInfo, "Co-Leader") || strstr(szInfo, "Member")))
+            {
+                Log("[GRANK] Rank diyalogu algilandi ('%s'), faz 2'ye gecilir.", szTitle);
+                g_grankPhase = 2;
+                g_grankPage = 0;
+            }
             if (g_grankPhase == 1) {
-                int targetRow = -1, nextRow = -1;
+                int targetRow = -1, targetItem = -1, nextRow = -1, nextItem = -1;
+                char firstColG[128] = {0}; // grank hedef satirin ilk sutunu
                 const char *pL = szInfo;
                 int row = 0;
+                int iHeaderRows = (sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST_HEADERS) ? 1 : 0;
+                int dataRow = -1; // veri satiri indeksi 0-based: bos satirlar + baslik HARIC (sunucu listitem'i bu)
                 while(pL && *pL){
                     const char *pE = strchr(pL, '\n');
                     size_t nLen = pE ? (size_t)(pE - pL) : strlen(pL);
                     if(nLen>0 && nLen<300){
+                        if(row >= iHeaderRows) dataRow++;
                         char szLine[512]; memcpy(szLine, pL, nLen); szLine[nLen]=0;
                         char szClean[512]={0}; int c=0;
                         for(size_t i=0; szLine[i] && c<500; i++){
@@ -1006,10 +1100,22 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                         } szClean[c]=0;
                         char szLow[512]={0};
                         for(int i=0; szClean[i] && i<500; i++) szLow[i]=tolower((unsigned char)szClean[i]);
-                        char tgtLow[64]={0};
-                        for(size_t i=0; i<g_grankTarget.size() && i<63; i++) tgtLow[i]=tolower((unsigned char)g_grankTarget[i]);
-                        if(tgtLow[0] && strstr(szLow, tgtLow)) targetRow = row;
-                        if(strstr(szLine, ">>") || strstr(szLow, "next") || strstr(szLow, "sonraki")) nextRow = row;
+                        // isim sutununu cikar: "12  washe\tProgrom\tLeader\tNow" -> "washe"
+                        char *pN = szClean;
+                        while(*pN==' '||*pN=='\t'||*pN=='\r') pN++;
+                        while(*pN>='0' && *pN<='9') pN++;
+                        while(*pN=='.'||*pN==':'||*pN=='-'||*pN==' '||*pN=='\t') pN++;
+                        char name[64]={0}; int ni=0;
+                        while(pN[ni] && pN[ni]!=' ' && pN[ni]!='\t' && pN[ni]!='\r' && ni<63){ name[ni]=pN[ni]; ni++; }
+                        name[ni]=0;
+                        // SADECE isim eslesmesi (renksiz, case-insensitive)
+                        if(name[0] && !_stricmp(name, g_grankTarget.c_str())){
+                            targetRow = row; targetItem = dataRow;
+                            int fc = 0;
+                            for(fc = 0; szClean[fc] && szClean[fc] != '\t' && fc < 127; fc++) firstColG[fc] = szClean[fc];
+                            firstColG[fc] = 0;
+                        }
+                        if(strstr(szLow, ">>") || strstr(szLow, "next") || strstr(szLow, "sonraki")){ nextRow = row; nextItem = dataRow; }
                     }
                     row++;
                     if(!pE) break;
@@ -1018,26 +1124,23 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                 RakNet::BitStream bs;
                 bs.Write((uint16_t)wDialogID);
                 if(targetRow >= 0){
-                    Log("[GRANK] Hedef '%s' bulundu (satir %d)", g_grankTarget.c_str(), targetRow);
-                    bs.Write((uint8_t)1);
-                    bs.Write((uint16_t)targetRow);
-                    bs.Write((uint8_t)0);
-                    g_grankPhase = 2;
-                    g_grankPage = 0;
-                    pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
+                    Log("[GRANK] Hedef '%s' bulundu (satir %d, item %d).", g_grankTarget.c_str(), targetRow, targetItem);
+                    StartGrCandidateClicks(targetRow, targetItem >= 0 ? targetItem : targetRow, (unsigned short)wDialogID, g_grankPage, firstColG);
                     return 1;
                 } else if(nextRow >= 0 && g_grankPage < 10){
-                    Log("[GRANK] Hedef bu sayfada yok, sonraki sayfa -> satir %d", nextRow);
+                    Log("[GRANK] Hedef bu sayfada yok, sonraki sayfa -> item %d", nextItem);
                     bs.Write((uint8_t)1);
-                    bs.Write((uint16_t)nextRow);
+                    bs.Write((uint16_t)(nextItem >= 0 ? nextItem : nextRow));
                     bs.Write((uint8_t)0);
                     g_grankPage++;
                     pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
                     return 1;
-                } else if(g_grankPage < 10){
-                    Log("[GRANK] Sag buton '>>' deneniyor (sayfa %d)", g_grankPage+1);
+                } else if(g_grankPage < 10 && strstr(sampDialog.szButton2, ">>")){
+                    // '>>' butonuna tikla: sag buton (0) + secili ilk satir (0).
+                    // 0+0xFFFF = ESC = iptal (sunucu sayfa acmaz).
+                    Log("[GRANK] Hedef bulunamadi, '>>' butonu tiklanıyor (sayfa %d)", g_grankPage+1);
                     bs.Write((uint8_t)0);
-                    bs.Write((uint16_t)0xFFFF);
+                    bs.Write((uint16_t)0);
                     bs.Write((uint8_t)0);
                     g_grankPage++;
                     pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
@@ -1052,15 +1155,20 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                 g_grankPhase = 0;
                 return 1;
             } else if (g_grankPhase == 2) {
-                int rankRow = -1;
+                g_grTargetItem = -1; g_grDlgId = 0; // uye tiklamalari durdu
+                // (Buraya yalnizca aday tiklama sonrasi gelen rank diyalogu ile girilir.)
+                int rankRow = -1, rankItem = -1;
                 const char *pL = szInfo;
                 int row = 0;
+                int iHeaderRows = (sampDialog.bDialogStyle == DIALOG_STYLE_TABLIST_HEADERS) ? 1 : 0;
+                int dataRow = -1;
                 char rankLow[64]={0};
                 for(size_t i=0; i<g_grankRank.size() && i<63; i++) rankLow[i]=tolower((unsigned char)g_grankRank[i]);
                 while(pL && *pL){
                     const char *pE = strchr(pL, '\n');
                     size_t nLen = pE ? (size_t)(pE - pL) : strlen(pL);
                     if(nLen>0 && nLen<300){
+                        if(row >= iHeaderRows) dataRow++;
                         char szLine[512]; memcpy(szLine, pL, nLen); szLine[nLen]=0;
                         char szClean[512]={0}; int c=0;
                         for(size_t i=0; szLine[i] && c<500; i++){
@@ -1069,7 +1177,7 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                         } szClean[c]=0;
                         char szLow[512]={0};
                         for(int i=0; szClean[i] && i<500; i++) szLow[i]=tolower((unsigned char)szClean[i]);
-                        if(rankLow[0] && strstr(szLow, rankLow)) rankRow = row;
+                        if(rankLow[0] && strstr(szLow, rankLow)){ rankRow = row; rankItem = dataRow; }
                     }
                     row++;
                     if(!pE) break;
@@ -1078,14 +1186,20 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                 RakNet::BitStream bs;
                 bs.Write((uint16_t)wDialogID);
                 if(rankRow >= 0){
-                    Log("[GRANK] Rank '%s' bulundu (satir %d), seciliyor...", g_grankRank.c_str(), rankRow);
+                    Log("[GRANK] Rank '%s' bulundu (item %d), cift tik (1/2)...", g_grankRank.c_str(), rankItem);
                     bs.Write((uint8_t)1);
-                    bs.Write((uint16_t)rankRow);
-                    bs.Write((uint8_t)0);
+                    bs.Write((uint16_t)(rankItem >= 0 ? rankItem : rankRow));
+                    BYTE rlen = (BYTE)g_grankRank.size();
+                    bs.Write((uint8_t)rlen);
+                    bs.Write(g_grankRank.c_str(), rlen);
                     pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
-                    Log("[GRANK] Otomasyon tamam: %s -> %s", g_grankTarget.c_str(), g_grankRank.c_str());
-                    g_grankActive = false;
-                    g_grankPhase = 0;
+                    g_grRoleDlgId = (unsigned short)wDialogID;
+                    g_grRoleItem = rankItem >= 0 ? rankItem : rankRow;
+                    g_grRoleInput[0] = 0;
+                    strncpy_s(g_grRoleInput, sizeof(g_grRoleInput), g_grankRank.c_str(), sizeof(g_grRoleInput) - 1);
+                    g_grRoleDblAt = GetTickCount() + 300;
+                    g_grRoleIsGrank = true;
+                    g_grRoleDblPending = true;
                     return 1;
                 }
                 Log("[GRANK] Rank '%s' bulunamadi, iptal.", g_grankRank.c_str());

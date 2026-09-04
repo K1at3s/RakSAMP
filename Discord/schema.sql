@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS guilds (
     group_chat_channel_id VARCHAR(255) NULL,
     zone_war_channel_id VARCHAR(255) NULL,
     backup_channel_id VARCHAR(255) NULL,
-    welcome_channel_id VARCHAR(255) NULL,
+    group_log_channel_id VARCHAR(255) NULL,
+    bot_commands_channel_id VARCHAR(255) NULL,
     group_chat_enabled TINYINT NOT NULL DEFAULT 0,
     lang VARCHAR(8) NOT NULL DEFAULT 'en',
     group_name VARCHAR(255) NOT NULL DEFAULT '',   -- botun oyun içi grubu (poll'dan öğrenilir)

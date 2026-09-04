@@ -1,11 +1,13 @@
-﻿const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const Guild = require('../models/Guild');
 const { sendToGuildChannel } = require('../utils/discordNotifier');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('backup')
+        .setNameLocalizations({ tr: 'destek', 'en-US': 'backup' })
         .setDescription('Backup cagrisi gonderir (backup kanalina @here acil yardim)')
+        .setDescriptionLocalizations({ tr: 'Backup çağrısı gönderir (backup kanalına @here acil yardım)', 'en-US': 'Sends a backup call (@here urgent help to the backup channel)' })
         .addStringOption(o => o.setName('grup').setDescription('Grup adi').setRequired(true))
         .addStringOption(o => o.setName('mesaj').setDescription('Ek mesaj').setRequired(false))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),

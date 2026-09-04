@@ -614,6 +614,13 @@ void PollCommands() {
                         std::cout << "­sÅÀ´©Å [COMMAND] Discord'dan /grank direk: " << cmd << "\n";
                         sendServerCommand((char *)cmd.c_str());
                     }
+                } else if (type == "pm") {
+                    std::string target = c.value("target", "");
+                    std::string message = c.value("message", "");
+                    std::string discordUser = c.value("discordUser", "");
+                    std::string reqId = c.value("requesterId", "");
+                    std::cout << "[COMMAND] Discord'dan PM: " << target << " <- " << discordUser << "\n";
+                    StartPm(target.c_str(), message.c_str(), discordUser.c_str(), reqId.c_str());
                 } else if (type == "grole_list") {
                     std::string requesterId = c.value("requesterId", "");
                     std::string guildId = c.value("guildId", "");
@@ -636,9 +643,11 @@ void PollCommands() {
 }
 
 // 13. GZ sonucu (kill list) - "gz sonucl.txt" dosyasindan okunan metni Discord zonewar kanalina embed olarak yolla
-void SendKillList(const std::string& killListText) {
+void SendKillList(const char *redBox, const char *blueBox, const char *redName, const char *blueName,
+    const char *redTag, const char *blueTag, int redKills, int blueKills, bool won,
+    const char *mvpName, const char *feederName, int mvpDmg, int mvpKills, int feederDeaths) {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
-    if (killListText.empty()) return;
+    if (!redBox || !redBox[0] || !blueBox || !blueBox[0]) return;
 
     httplib::Client cli(g_backendBase);
     cli.set_connection_timeout(5);
@@ -646,9 +655,20 @@ void SendKillList(const std::string& killListText) {
     json body = {
         {"hwid", g_myHWID},
         {"playerName", std::string(g_szNickName ? g_szNickName : "Bir oyuncu")},
-        {"ownGroup", g_myGroupName},
-        {"enemyGroup", g_enemyGroupName},
-        {"killList", killListText}
+        {"won", won ? 1 : 0},
+        {"redName", redName ? redName : ""},
+        {"blueName", blueName ? blueName : ""},
+        {"redTag", redTag ? redTag : ""},
+        {"blueTag", blueTag ? blueTag : ""},
+        {"redKills", redKills},
+        {"blueKills", blueKills},
+        {"redBox", redBox},
+        {"blueBox", blueBox},
+        {"mvp", mvpName ? mvpName : ""},
+        {"mvpDmg", mvpDmg},
+        {"mvpKills", mvpKills},
+        {"feeder", feederName ? feederName : ""},
+        {"feederDeaths", feederDeaths}
     };
 
     auto res = cli.Post("/api/killlist", body.dump(), "application/json");

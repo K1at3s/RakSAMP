@@ -1,4 +1,4 @@
-﻿const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models/Guild');
 const { queueCommand } = require('../utils/commandOutbox');
 const { setPendingInteraction } = require('../utils/pendingReplies');
@@ -6,7 +6,9 @@ const { setPendingInteraction } = require('../utils/pendingReplies');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('grole')
+        .setNameLocalizations({ tr: 'grol', 'en-US': 'grole' })
         .setDescription('Grup uyesine rol ver (Member / Co-Leader) — interaktif veya direkt')
+        .setDescriptionLocalizations({ tr: 'Grup üyesine rol ver (Member / Co-Leader) — interaktif veya direkt', 'en-US': 'Give a group member a role (Member / Co-Leader) — interactive or direct' })
         .addStringOption(o => o.setName('name').setDescription('Oyuncu adi (bos birakirsan listeden secersin)').setRequired(false))
         .addStringOption(o => o.setName('role').setDescription('Rol: mem (Member) veya co (Co-Leader)').setRequired(false)
             .addChoices(

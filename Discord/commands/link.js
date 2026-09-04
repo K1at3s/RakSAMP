@@ -1,10 +1,12 @@
-﻿const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const Guild = require('../models/Guild');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('link')
+        .setNameLocalizations({ tr: 'bagla', 'en-US': 'link' })
         .setDescription('Bu sunucuyu RakSAMP HWID\'nize baglar')
+        .setDescriptionLocalizations({ tr: "Bu sunucuyu RakSAMP HWID'nize bağlar", 'en-US': "Links this server to your RakSAMP HWID" })
         .addStringOption(o => o.setName('hwid')
             .setDescription('RakSAMP\'in gosterdigi HWID kodu (orn. BURHAN-XXXX)')
             .setRequired(true))

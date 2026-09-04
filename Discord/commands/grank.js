@@ -1,4 +1,4 @@
-﻿const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models/Guild');
 const { queueCommand } = require('../utils/commandOutbox');
 const { setPendingInteraction } = require('../utils/pendingReplies');
@@ -6,7 +6,9 @@ const { setPendingInteraction } = require('../utils/pendingReplies');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('grank')
+        .setNameLocalizations({ tr: 'gran', 'en-US': 'grank' })
         .setDescription('Grup uyesine rank ver — interaktif veya direkt')
+        .setDescriptionLocalizations({ tr: 'Grup üyesine rank ver — interaktif veya direkt', 'en-US': 'Give a group member a rank — interactive or direct' })
         .addStringOption(o => o.setName('name').setDescription('Oyuncu adi (bos birakirsan listeden secersin)').setRequired(false))
         .addStringOption(o => o.setName('rank').setDescription('Rank adi (or: Co-Leader, Member, vb.)').setRequired(false)),
     async execute(interaction) {

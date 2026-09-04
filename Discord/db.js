@@ -182,6 +182,11 @@ async function init() {
     await p.execute(`ALTER TABLE bots ADD COLUMN gzt_enabled TINYINT NOT NULL DEFAULT 1`).catch(() => {});
     await p.execute(`ALTER TABLE bots ADD COLUMN zgrp_enabled TINYINT NOT NULL DEFAULT 1`).catch(() => {});
     await p.execute(`ALTER TABLE guilds ADD COLUMN allowed_role_id VARCHAR(255) NULL`).catch(() => {});
+    // Grup log (?post) + bot komut kanallari (yeni) — mevcut tabloya kolon ekle
+    await p.execute(`ALTER TABLE guilds ADD COLUMN group_log_channel_id VARCHAR(255) NULL`).catch(() => {});
+    await p.execute(`ALTER TABLE guilds ADD COLUMN bot_commands_channel_id VARCHAR(255) NULL`).catch(() => {});
+    // Welcome Discord kanali kaldirildi (welcome oyun ici kalir) — eski kolon DB'den duser.
+    await p.execute(`ALTER TABLE guilds DROP COLUMN welcome_channel_id`).catch(() => {});
     // Index se├gici ekleme yok
     // Admin loglari: oyun ici "ADMIN: X banned/muted/kicked/disarmed Y(id) ..." yakalamasi
     await p.execute(`CREATE TABLE IF NOT EXISTS admin_logs (

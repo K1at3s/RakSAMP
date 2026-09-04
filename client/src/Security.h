@@ -75,7 +75,9 @@ void SendAdminsToDiscord(const char *szInfo);
 void SendBackupCall(const char *playerName);
 void SendWelcomeBack(const char *playerName);
 void PollCommands();
-void SendKillList(const std::string& killListText);
+void SendKillList(const char *redBox, const char *blueBox, const char *redName, const char *blueName,
+    const char *redTag, const char *blueTag, int redKills, int blueKills, bool won,
+    const char *mvpName, const char *feederName, int mvpDmg, int mvpKills, int feederDeaths);
 void ProcessZoneWarAutoJoin();
 void ProcessZgoReturn();
 void ProcessZtkTick();
@@ -118,6 +120,25 @@ extern unsigned long g_grankStartTime;
 extern int  g_grankPage;
 void StartGrole(const char *target, const char *role);
 void StartGrank(const char *target, const char *rank);
+void StartPm(const char *target, const char *message, const char *discordUser, const char *requesterId);
+// Ortak uye-tiklama aday mekanizmasi (grole+grank): sunucunun hangi buton/item
+// kombinasyonunu kabul ettigi bilinmiyor, adaylar sirali denenir (ProcessZoneScan).
+void StartGrCandidateClicks(int rawRow, int item, unsigned short dlgId, int page, const char *firstCol);
+void ProcessGrCandidateClicks();
+extern int g_grTargetItem;
+extern int g_grRawRow;
+extern unsigned short g_grDlgId;
+extern bool g_grRoleDblPending;
+extern unsigned short g_grRoleDlgId;
+extern int g_grRoleItem;
+extern unsigned long g_grRoleDblAt;
+extern bool g_grRoleIsGrank;
+extern char g_grRoleInput[64];
+extern bool g_secCmdPending;
+extern bool g_secCmdIsEmail;
+extern char g_secCmdValue[128];
+extern unsigned long g_secCmdAt;
+extern int g_secCmdCount;
 extern bool g_groleListActive;
 extern std::string g_groleListRequesterId;
 extern std::string g_groleListGuildId;
