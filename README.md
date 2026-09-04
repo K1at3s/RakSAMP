@@ -102,7 +102,7 @@ Tüm komutlar grup chat'ine `?` önekiyle yazılır. `!` önekli mesajlar Discor
 | `/gstats [group_id]` | Grup istatistikleri |
 | `/admins` | Online adminler |
 | `/send <mesaj>` | Oyun içine mesaj gönder |
-| `/backup` | Acil durum çağrısı (@here) |
+| `/backup` | Acil durum çağrısı (`@here`) |
 | `/grole [name] [role]` | Grup üyesine rol ver (Member/Co-Leader) — interaktif üye/rol seçimi |
 | `/grank [name] [rank]` | Grup üyesine rank ver — interaktif |
 | `/setallowedrole <rol>` | Grole/Grank menülerini kullanabilecek rolü ayarla |
