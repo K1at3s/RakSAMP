@@ -1,10 +1,12 @@
-﻿const { SlashCommandBuilder, PermissionsBitField } = require('discord.js');
+const { SlashCommandBuilder, PermissionsBitField } = require('discord.js');
 const Guild = require('../models/Guild');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('setallowedrole')
+        .setNameLocalizations({ tr: 'iznirol', 'en-US': 'setallowedrole' })
         .setDescription('Grole/Grank menulerini kullanabilecek rolu ayarla (DB)')
+        .setDescriptionLocalizations({ tr: 'Grole/Grank menülerini kullanabilecek rolü ayarla (DB)', 'en-US': 'Sets the role allowed to use the Grole/Grank menus (DB)' })
         .addRoleOption(o => o.setName('role').setDescription('Izin verilecek rol (bos birakirsan herkes)').setRequired(false)),
     async execute(interaction) {
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.ManageGuild) && interaction.guild.ownerId !== interaction.user.id) {

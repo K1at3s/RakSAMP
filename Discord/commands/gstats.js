@@ -1,4 +1,4 @@
-﻿const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models/Guild');
 const { queueCommand } = require('../utils/commandOutbox');
 const { setPendingInteraction } = require('../utils/pendingReplies');
@@ -6,7 +6,9 @@ const { setPendingInteraction } = require('../utils/pendingReplies');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('gstats')
+        .setNameLocalizations({ tr: 'gistatistik', 'en-US': 'gstats' })
         .setDescription('Bagli RakSAMP istemcisinden grup istatistikleri ister')
+        .setDescriptionLocalizations({ tr: 'Bağlı RakSAMP istemcisinden grup istatistikleri ister', 'en-US': 'Requests group stats from the linked RakSAMP client' })
         .addStringOption(o => o.setName('group_id').setDescription('Belirli bir grubun ID si (bos birakilirsa kendi grubun)').setRequired(false)),
     async execute(interaction) {
         const guild = await Guild.findOne({ guildId: interaction.guildId });

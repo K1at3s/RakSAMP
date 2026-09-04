@@ -1,4 +1,4 @@
-﻿const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models/Guild');
 const { queueCommand } = require('../utils/commandOutbox');
 const { setPendingInteraction } = require('../utils/pendingReplies');
@@ -6,7 +6,9 @@ const { setPendingInteraction } = require('../utils/pendingReplies');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('stats')
+        .setNameLocalizations({ tr: 'istatistik', 'en-US': 'stats' })
         .setDescription('RakSAMP istatistikleri: bos birakilirsa kendi, ID verilirse o oyuncu')
+        .setDescriptionLocalizations({ tr: 'RakSAMP istatistikleri: boş bırakılırsa kendi, ID verilirse o oyuncu', 'en-US': 'RakSAMP stats: blank for own, or a player ID' })
         .addIntegerOption(o => o.setName('id').setDescription('Oyuncu/hesap ID si (bos birakilirsa kendi istatistiklerin)').setRequired(false)),
     async execute(interaction) {
         const guild = await Guild.findOne({ guildId: interaction.guildId });

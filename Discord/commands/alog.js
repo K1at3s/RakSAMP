@@ -1,10 +1,12 @@
-﻿const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const db = require('../db');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('alog')
+        .setNameLocalizations({ tr: 'alog', 'en-US': 'alog' })
         .setDescription('Oyuncunun admin log gecmisini gosterir (ban/mute/kick, mod, sebep)')
+        .setDescriptionLocalizations({ tr: 'Oyuncunun admin log geçmişini gösterir (ban/mute/kick, mod, sebep)', 'en-US': "Shows the player's admin log history (ban/mute/kick, mode, reason)" })
         .addStringOption(o => o.setName('oyuncu').setDescription('Oyuncu adi veya ID').setRequired(true)),
     async execute(interaction) {
         const q = interaction.options.getString('oyuncu').trim();

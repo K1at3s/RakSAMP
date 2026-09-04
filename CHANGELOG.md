@@ -1,3 +1,40 @@
+# v1.6.0
+
+## /grole / /grank — tam otomasyon
+- **Çift tıklama + inputtext**: UIF diyaloğu üyeyi seçili satırın İLK SÜTUNU (örn. `40  cb650r`) ile tanıyor; üye çift tık + inputtext ile seçiliyor, rol/rank diyaloğu tanınıp faz 2'ye geçiliyor, rol de çift tık + inputtext ile veriliyor. `Buton 0 = sayfalama` (item yok sayılır), seçim `buton 1` ile.
+- **Oyun içi `?grole <isim> <memb|co>`** ve **`?grank <isim> <rank>`**: grup chat'inden yetkisiz diyalog akışı olmadan aynı otomasyonla rol/rank değiştirir (memb/mem/member → Member, co → Co-Leader).
+- **?grole / ?grank menü lokalizasyonu** (TR/EN).
+
+## Güvenlik komutları (?changepass / ?email)
+- Yalnızca **PM + yetkili isimler** (Oreyoo, hakixld, cb650r) kullanabilir; `?help`'te görünmez.
+- UIF `/changepass` ve `/email` **input menüsü** açar: değer saklanır, menüye yazılıp submit edilir (max 2 adım: şifre + onay). Onay `/r` ile PM'e döner.
+
+## Grup log sistemi
+- **`?post [gerekçe]`**: son grup aksiyonunu (rol/rank değişikliği, kick) `bot-grouplog` kanalına embed olarak atar — Aksiyon/Yapan/Üzerinde/Değişiklik/Gerekçe (dile göre; gerekçe yazılmazsa 30 sn pencere, "Gerekçe verilmedi").
+- Kick tespiti eklendi (`GROUP: X kicked Y`).
+- `?post` artık `/rankreason` göndermiyor (sunucuda yoktu); eski `?post` yerine hepsi bu akışta.
+
+## Zone War / Kill List
+- **War-end tespit düzeltildi**: `?za`/`?gz` cooldown'ı war-end zamanlayıcısını kirletiyordu — "loses to" mesajı yutuluyor, savaş hiç bitmiyordu (`war=1` takılı). Ayrı zamanlayıcıya alındı.
+- **Kill list finalize düzeltildi**: savaş bitişinde `g_zwKillListSent` erken true yapılıyordu (sonuç asla gitmiyordu); yeni savaş başlarken bekleyen veri finalize ediliyor.
+- **Yeni kill list embed**: kazandı → 🏆 Group Zone War Won / kaybetti → 💀 Group Zone War Lost; kırmızı vs mavi takım + tag'ler, Score-Kills, iki takım kutusu (Name/K/A/D/DMG hizalı + Total — client hesaplar), ⭐ MVP (isim + dmg, kills) ve 🎯 Top Feeder (isim + deaths).
+- **?gzt eşik geçişi**: tam saniye eşleşmesi yerine eşik GEÇİŞİ tespiti (10/3/1 garanti, 9:xx geçişte).
+
+## Tag / Harvest
+- **Otomatik tag harvest KAPALI varsayılan**: girişte otomatik kayıt yok; elle `?zgrp` (diğer gruplar) / `?tagscan` (manuel tarama) ile tetiklenir.
+- **`~` işaretli no-tag gruplar** bir daha taranmaz; `?tag` kısmi isim eşleşmesi (`didnt need` → "Didn't need a group"), apostrof yok sayılır.
+- Harvest bitiş duyurusu gruba artık ATILMAZ (sessiz).
+
+## Discord tarafı
+- **`/kurulum`** (create) / **`/kurulum kapat`** (off): kanal kur/sil — OTOMATİK kanal oluşturma KALDIRILDI.
+- **`/mesaj` (pm)**: oyuna `[Discord][isim]: mesaj` gönderir; oyuncu yanıtlarsa etiketli + ephemeral döner (15 dk).
+- **`/kanalayarla`, `/iznirol`** ve tüm komutlar **discord.js lokalizasyonu** ile (TR/EN adlar).
+- **`?w`** 3 dk cooldown, `@here`, düşman grup + dile göre metin. Köprü `(In-Game)`/`(Oyun)`.
+- **HWID onay**: yeni cihazda sahibin kanalına embed + Onayla/Reddet butonları; kategori `<grup> - Logs/Logları` otomatik.
+- **bot-commands/bot-komut** kanalı, `bot-grouplog` DB alanı, `?post` embed'i dile göre.
+- Welcome mesajları artık **Discord'a gitmiyor** (oyun içi kalır; kanal/DB alanı kaldırıldı).
+- `BOT_KOMUTLARI.txt`: tüm komutlar + işlevleri.
+
 # v1.5.1
 
 ## Spawn / Konum

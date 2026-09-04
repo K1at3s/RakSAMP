@@ -1,10 +1,12 @@
-﻿const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const Guild = require('../models/Guild');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('setchannel')
+        .setNameLocalizations({ tr: 'kanalayarla', 'en-US': 'setchannel' })
         .setDescription('Kanal ayarlar (ayarlanmazsa null olarak kalir)')
+        .setDescriptionLocalizations({ tr: 'Kanal ayarlar (ayarlanmazsa null olarak kalır)', 'en-US': 'Sets a channel (stays null if not set)' })
         .addStringOption(o => o.setName('type')
             .setDescription('Kanal turu')
             .setRequired(true)
@@ -14,8 +16,7 @@ module.exports = {
                 { name: '📊 GStats Verileri', value: 'gstats' },
                 { name: '💬 Grup Chat Koprusu', value: 'group-chat' },
                 { name: '⚔️ ZONE WAR Bildirimleri', value: 'zone-war' },
-                { name: '🆘 Backup Cagrilari (?1414)', value: 'backup' },
-                { name: '👋 Welcome Back Mesajlari', value: 'welcome' }
+                { name: '🆘 Backup Cagrilari (?1414)', value: 'backup' }
             ))
         .addChannelOption(o => o.setName('kanal')
             .setDescription('Hedef kanal')
@@ -31,8 +32,7 @@ module.exports = {
             gstats: 'gstatsChannelId',
             'group-chat': 'groupChatChannelId',
             'zone-war': 'zoneWarChannelId',
-            backup: 'backupChannelId',
-            welcome: 'welcomeChannelId'
+            backup: 'backupChannelId'
         };
         const field = fieldMap[type] || `${type}ChannelId`;
 

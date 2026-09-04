@@ -1,4 +1,4 @@
-﻿const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models/Guild');
 const { queueCommand } = require('../utils/commandOutbox');
 const { setPendingInteraction } = require('../utils/pendingReplies');
@@ -6,7 +6,9 @@ const { setPendingInteraction } = require('../utils/pendingReplies');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('admins')
-        .setDescription('Bagli RakSAMP istemcisinden online admin listesini ister'),
+        .setNameLocalizations({ tr: 'adminler', 'en-US': 'admins' })
+        .setDescription('Bagli RakSAMP istemcisinden online admin listesini ister')
+        .setDescriptionLocalizations({ tr: 'Bağlı RakSAMP istemcisinden online admin listesini ister', 'en-US': 'Requests the online admin list from the linked RakSAMP client' }),
     async execute(interaction) {
         const guild = await Guild.findOne({ guildId: interaction.guildId });
 

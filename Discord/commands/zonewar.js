@@ -1,11 +1,13 @@
-﻿const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const Guild = require('../models/Guild');
 const { sendToGuildChannel } = require('../utils/discordNotifier');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('zonewar')
+        .setNameLocalizations({ tr: 'bolgesavasi', 'en-US': 'zonewar' })
         .setDescription('ZONE WAR bildirimini manuel olarak zonewar kanalina gonderir')
+        .setDescriptionLocalizations({ tr: 'ZONE WAR bildirimini manuel olarak zonewar kanalına gönderir', 'en-US': 'Manually sends a ZONE WAR notification to the zonewar channel' })
         .addStringOption(o => o.setName('grup').setDescription('Saldiran grup').setRequired(true))
         .addStringOption(o => o.setName('durum')
             .setDescription('Savas durumu')
