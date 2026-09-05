@@ -81,6 +81,7 @@ static char g_zwMvpName[64] = {0}, g_zwFeederName[64] = {0};
 static int g_zwMineK = 0, g_zwMineA = 0, g_zwMineD = 0, g_zwMineDmg = 0;
 static int g_zwEnemyK = 0, g_zwEnemyA = 0, g_zwEnemyD = 0, g_zwEnemyDmg = 0;
 static bool g_zwWeWon = true; // savas sonucu: biz kazandik mi (war-end blogu kurar)
+static char g_zwFirstBlood[160] = {0}; // GZ ilk kill: "isim (Weapon: X) (Distance: Ym)"
 
 // GZ giri-sleri: sava-s ba-s-▒nda tak-▒m rengi --srenmek i-gin k-▒sa giri-s; son 00:02'de kill-list giri-si.
 static bool   g_zwReturnPending = false;   // k-▒sa giri-s aktif ([gz2] -> [fr] ile geri d-n-╝lecek)
@@ -2536,6 +2537,33 @@ void ClientMessage(RPCParameters *rpcParams)
 	CheckAdminLogMessage(szNonColorEmbeddedMsg);
 	CheckGroupLogMessage(szNonColorEmbeddedMsg);
 
+	// First Blood: GZ kill feedi "X(pid) has killed Y(pid) (Weapon: Z) (Distance: Nm)"
+	// (Most Wanted formati "* X killed Y" — * önekli olanlar degil). Savas basinda
+	// bot 3 sn GZ'ye girer; o penceredeki ilk kill = first blood.
+	if(g_inZoneWar && !g_zwFirstBlood[0] && szNonColorEmbeddedMsg[0] != '*')
+	{
+		const char *pK = strstr(szNonColorEmbeddedMsg, " has killed ");
+		if(pK && strstr(pK, "(Weapon:"))
+		{
+			char szKiller[64] = {0};
+			const char *pOp = strchr(szNonColorEmbeddedMsg, '(');
+			if(pOp){ size_t n = (size_t)(pOp - szNonColorEmbeddedMsg); if(n > 63) n = 63; memcpy(szKiller, szNonColorEmbeddedMsg, n); szKiller[n] = 0; }
+			char szWpn[48] = {0};
+			const char *pW = strstr(pK, "(Weapon:"), *pWE = NULL;
+			if(pW) pWE = strchr(pW, ')');
+			if(pW && pWE){ const char *pS = pW + 8; while(*pS == ' ') pS++; size_t n = (size_t)(pWE - pS); if(n > 47) n = 47; memcpy(szWpn, pS, n); szWpn[n] = 0; }
+			char szDist[16] = {0};
+			const char *pD = strstr(pK, "(Distance:"), *pDE = NULL;
+			if(pD) pDE = strchr(pD, 'm');
+			if(pD && pDE){ const char *pS = pD + 10; while(*pS == ' ') pS++; size_t n = (size_t)(pDE - pS); if(n > 15) n = 15; memcpy(szDist, pS, n); szDist[n] = 0; }
+			if(szKiller[0])
+			{
+				sprintf_s(g_zwFirstBlood, sizeof(g_zwFirstBlood), "%s (Weapon: %s) (Distance: %sm)", szKiller, szWpn, szDist);
+				Log("[KILLLIST] First Blood: %s", g_zwFirstBlood);
+			}
+		}
+	}
+
 	// --- Zone War chat dedektoru (RakGravy desenleri) ---
 	// "keeps zone" / "takes over" / "wins against" / "loses to" iceren mesajlar
 	// Discord zonewar kanalina bildirilir. 60 sn cooldown, cift tetiklenmeyi onler.
@@ -2651,6 +2679,7 @@ void ClientMessage(RPCParameters *rpcParams)
 				g_zwMineK = 0; g_zwMineA = 0; g_zwMineD = 0; g_zwMineDmg = 0;
 				g_zwEnemyK = 0; g_zwEnemyA = 0; g_zwEnemyD = 0; g_zwEnemyDmg = 0;
 				g_zwWeWon = true;
+				g_zwFirstBlood[0] = 0;
 				// Kill list textdraw'lari (Name/Kills/Assists/Deaths/Dmg) GZ'de
 				// olmaya gerek kalmadan da gelebiliyor (SaveTextDrawData logladi).
 				// Savas boyunca yakalayiciyi ACIK tut; bitince finalize et.
@@ -5669,7 +5698,7 @@ void FinalizeKillList()
 
 	// Discord'a gonder (yapilandirilmis: kazandi mi, kirmizi/mavi takim + tag + kutu, MVP/feeder)
 	SendKillList(strRedBox.c_str(), strBlueBox.c_str(), pRedName, pBlueName, pRedTag, pBlueTag,
-		iRedK, iBlueK, g_zwWeWon, g_zwMvpName, g_zwFeederName, g_zwBestDmg, g_zwBestK, g_zwBestD);
+		iRedK, iBlueK, g_zwWeWon, g_zwMvpName, g_zwFeederName, g_zwBestDmg, g_zwBestK, g_zwBestD, g_zwFirstBlood);
 
 	g_zwCapturingKillList = false;
 	g_zwKillListSent = true;

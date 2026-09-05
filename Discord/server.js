@@ -544,11 +544,11 @@ app.post('/api/killlist', async (req, res) => {
     const blueBox = String(body.blueBox || '').trim();
     const mvp = String(body.mvp || '?').trim();
     const feeder = String(body.feeder || '?').trim();
-    const playerName = body.playerName || 'Bir oyuncu';
 
 const mvpDmg = Number(body.mvpDmg) || 0;
     const mvpKills = Number(body.mvpKills) || 0;
     const feederDeaths = Number(body.feederDeaths) || 0;
+    const firstBlood = String(body.firstBlood || '').trim();
 
     if (!redBox && !blueBox) {
         return res.json({ success: false, message: "Kill list boş." });
@@ -560,24 +560,25 @@ const mvpDmg = Number(body.mvpDmg) || 0;
         scoreKills: isTr ? 'Skor-Kills' : 'Score-Kills',
         mvp: '⭐ MVP',
         feeder: '🎯 Top Feeder',
-        captured: isTr ? `${playerName} tarafından alındı` : `Captured by ${playerName}`
+        firstBlood: isTr ? '🩸 İlk Kan' : '🩸 First Blood',
+    
     };
 
     const embed = new EmbedBuilder()
         .setTitle(won ? t.wonTitle : t.lostTitle)
         .setDescription(`${redName} vs **${blueName}**\n*${isTr ? 'Grup zone savaşı' : 'Group zone war'}*\n${t.scoreKills}: ${redTag || redName}:${redKills} ${blueTag || blueName}:${blueKills}`)
         .setColor(won ? 0x00FF00 : 0xFF0000)
-        .setFooter({ text: t.captured })
         .setTimestamp()
-        .addFields(
-            { name: `**${redName}**`, value: `\`\`\`\n${redBox}\n\`\`\`` },
-            { name: `**${blueTag || blueName}**`, value: `\`\`\`\n${blueBox}\n\`\`\`` },
-            { name: t.mvp, value: `**${mvp}** (${mvpDmg} dmg, ${mvpKills} kills)`, inline: true},
-            { name: t.feeder, value: `**${feeder}** (${feederDeaths} deaths)`, inline: true}
+.addFields(
+            { name: `⚔️ **${redName}**`, value: `\`\`\`\n${redBox}\n\`\`\`` },
+            { name: `⚔️ **${blueTag || blueName}**`, value: `\`\`\`\n${blueBox}\n\`\`\`` },
+            { name: t.mvp, value: `${mvp} (${mvpDmg} dmg, ${mvpKills} kills)`, inline: true },
+            { name: t.feeder, value: `${feeder} (${feederDeaths} deaths)`, inline: true },
+            { name: t.firstBlood, value: firstBlood ? `${firstBlood}` : '-', inline: true }
         );
 
     const channelId = await sendToGuildChannel(guild, 'zoneWarChannelId', { embed });
-    console.log(`⚔️ KILLLIST (guild=${guild.guildId}, kanal=${channelId || 'null'}, dil=${guild.lang}): ${won ? 'WIN' : 'LOSS'} ${redName} vs ${blueName} (${redKills}-${blueKills})`);
+    console.log(`⚔️ KILLLIST (guild=${guild.guildId}, kanal=${channelId || 'null'}, dil=${guild.lang}): ${won ? 'WIN' : 'LOSE'} ${redName} vs ${blueName} (${redKills}-${blueKills})`);
     return res.json({ success: true, channelId });
 });
 
@@ -915,6 +916,7 @@ app.get('/api/welcome/peruser/list', async (req, res) => {
 // Discord'dan oyuna komut iletme (client /api/command/poll ile çeker)
 const { queueCommand, drainCommands } = require('./utils/commandOutbox');
 const { getPendingInteraction, removePendingInteraction } = require('./utils/pendingReplies');
+const { truncate } = require('fs');
 
 // Komut bekleme kuyruğunu oyundan çek (polling)
 app.get('/api/command/poll', async (req, res) => {
