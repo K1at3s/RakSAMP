@@ -1,5 +1,7 @@
 # RakSAMP — UIF Grup Botu
 
+[**English**](README_EN.md) | **Türkçe**
+
 RakSAMP, **UIF (United Islands Freeroam)** sunucusu için geliştirilmiş otomatik grup botudur. SA-MP fake client altyapısı üzerine kurulu, Node.js/Discord backend ile entegre çalışır.
 
 **Bot:** `hakixld` — otomatik zone tarama, savaş takibi, grup tag harvest, Discord entegrasyonu.
@@ -9,12 +11,14 @@ RakSAMP, **UIF (United Islands Freeroam)** sunucusu için geliştirilmiş otomat
 ## 🎮 Özellikler
 
 - **Otomatik zone tarama** — flashing zone'ları tek tek teleport + `/gzinfo` ile öğrenir, sahiplik haritasını MySQL'e (`gangs` tablosu) kalıcı yazar. Normal tur bilinmeyen-only, her 4. tur tam kontrol.
-- **Grup tag harvest (`?zgrp`)** — `/groups` + `/gstats <ID>` zinciri ile eksik kısa tag'leri toplar, DB'ye yazar.
-- **Savaş takibi** — zone war başlangıç/bitiş, `?gzt` geri sayım (09:10/09:03/09:01/00:10/00:03/00:01), kill-list textdraw toplama + Discord'a embed.
-- **Discord entegrasyonu** — grup chat köprüsü, `/grole` `/grank` interaktif menüler, per-user welcome, admin/war logları.
+- **Grup tag harvest (`?zgrp` / `?tagscan`)** — `/groups` + `/gstats <ID>` zinciri ile eksik kısa tag'leri toplar, DB'ye yazar. Varsayılan **kapalı**; elle tetiklenir.
+- **Savaş takibi** — zone war başlangıç/bitiş, `?gzt` eşik geçişli geri sayım (10/3/1 garanti), kill-list textdraw toplama + Discord'a embed.
+- **Kill list embed** — kazanıldı/kaybedildi başlığı, kırmızı vs mavi takım + tag'ler, iki hizalı kutu (Name/K/A/D/DMG + Total), ⭐ MVP, 🎯 Top Feeder ve ⚡ First Blood (GZ'deki ilk kill, silah + mesafe).
+- **Discord entegrasyonu** — grup chat köprüsü, `/grole` `/grank` interaktif menüler, per-user welcome, admin/war logları, `?post` grup log embed.
 - **UIF login fix** — GTA-client formatında dialog submit (BYTE uzunluk), tmp hesaba düşmeden gerçek hesaba giriş.
 - **Grup adı öğrenme** — `/stats` → "Group" butonu → ikinci diyalogdan doğru grup adı.
 - **Virtual world fix** — spawn menüsü "Freeroam" cevabı GTA-client formatında, bot gerçek freeroam'da spawn olur.
+- **Güvenlik komutları** — `?changepass` / `?email` yalnızca PM + yetkili isimlerle, UIF input menüsü otomasyonuyla.
 
 ---
 
@@ -26,6 +30,7 @@ RakSAMP, **UIF (United Islands Freeroam)** sunucusu için geliştirilmiş otomat
    - `RakSAMPClient.xml` — sunucu adresi, bot ismi (`hakixld`), `normal_pos` spawn pozisyonu.
    - İlk açılışta konsola `/login <şifre>` yazarak hesaba gir (sunucu oturumu sonra hatırlar).
    - Backend kapalıysa client kendini kapatır.
+4. **Discord** — `/setup` (TR: `/kurulum`) komutuyla log kanallarını kur. Kanallar otomatik oluşturulmaz; yalnızca bu komutla kurulur. `/setup kapat` (EN: `/setup off`) ile silinir.
 
 ---
 
@@ -47,7 +52,7 @@ Tüm komutlar grup chat'ine `?` önekiyle yazılır. `!` önekli mesajlar Discor
 | Komut | Açıklama |
 |-------|----------|
 | `?ping` | Ping kontrol |
-| `?w` | War help (Discord @everyone, 5 dk cooldown) |
+| `?w` | War help (Discord @here, 3 dk cooldown, dile göre metin) |
 | `?pl [id]` | Oyuncu istatistiği (packetloss/FPS/ping) |
 | `?gst` | Bulunulan zone + aktif oyuncu sayısı |
 | `?gstats [id]` | Grup istatistikleri (Discord'a gönderir) |
@@ -68,17 +73,25 @@ Tüm komutlar grup chat'ine `?` önekiyle yazılır. `!` önekli mesajlar Discor
 ### Grup / Tag
 | Komut | Açıklama |
 |-------|----------|
-| `?zgrp on/off` | Grup tag harvest (tek seferlik) |
+| `?zgrp` | Grup tag harvest (manuel tarama) |
 | `?tagscan` | `?zgrp` alias |
 | `?tag <isim> <tag>` | Grup tag'ini elle kaydet (yerel + DB) |
 | `?gname` | Grup adını yeniden öğren |
+| `?grole <isim> <memb\|co>` | Oyun içi rol değiştirme (Member/Co-Leader) |
+| `?grank <isim> <rank>` | Oyun içi rank değiştirme |
 
 ### Savaş
 | Komut | Açıklama |
 |-------|----------|
-| `?gzt on/off/time` | Savaş geri sayım duyuruları |
+| `?gzt on/off/time` | Savaş geri sayım duyuruları (eşik geçişli) |
 | `?gz` / `?gz2` | Savaşa katıl / yedek çağır |
-| `?post <neden>` | Rol değişikliği gerekçesi (Discord embed) |
+| `?post [neden]` | Son grup aksiyonunu Discord embed olarak logla (30 sn gerekçe penceresi) |
+
+### Güvenlik (yalnızca PM + yetkili isimler)
+| Komut | Açıklama |
+|-------|----------|
+| `?changepass` | UIF şifre değiştirme (input menüsü otomasyonu, `/r` ile onay) |
+| `?email` | UIF e-posta değiştirme |
 
 ### Ayarlar
 | Komut | Açıklama |
@@ -93,16 +106,19 @@ Tüm komutlar grup chat'ine `?` önekiyle yazılır. `!` önekli mesajlar Discor
 
 ## 🤖 Discord Slash Komutları
 
-| Komut | Açıklama |
+Komut adları sunucu diline göre lokalize edilir (EN taban, TR lokalizasyon).
+
+| Komut (EN / TR) | Açıklama |
 |-------|----------|
 | `/link <hwid>` | HWID'i Discord sunucusuna bağla |
 | `/unlink` | Bağlantıyı kaldır |
-| `/setup` | Log kanallarını otomatik oluştur |
-| `/setchannel` | Kanal atamaları |
+| `/setup` / `/kurulum` | Log kanallarını oluştur (boş) / sil (`kapat` veya `off`) |
+| `/setchannel` / `/kanalayarla` | Kanal atamaları |
 | `/gstats [group_id]` | Grup istatistikleri |
 | `/admins` | Online adminler |
 | `/send <mesaj>` | Oyun içine mesaj gönder |
-| `/backup` | Acil durum çağrısı (`@here`) |
+| `/pm <mesaj>` / `/mesaj` | Oyun içine `[Discord][isim]` önekli mesaj gönder; yanıt ephemeral döner |
+| `/backup` | Acil durum çağrısı (@here) |
 | `/grole [name] [role]` | Grup üyesine rol ver (Member/Co-Leader) — interaktif üye/rol seçimi |
 | `/grank [name] [rank]` | Grup üyesine rank ver — interaktif |
 | `/setallowedrole <rol>` | Grole/Grank menülerini kullanabilecek rolü ayarla |
@@ -119,7 +135,7 @@ Tüm komutlar grup chat'ine `?` önekiyle yazılır. `!` önekli mesajlar Discor
 | `bots` | Bot başına ayarlar: group_name, zscan/gzt/zgrp on-off |
 | `licenses` | HWID lisansları + welcome mesajı/enabled |
 | `welcome_per_user` | Kişi bazlı welcome mesajları (hwid + isim) |
-| `guilds` | Discord sunucusu ayarları (kanallar, allowed_role_id) |
+| `guilds` | Discord sunucusu ayarları (kanallar, allowed_role_id, lang) |
 | `players` | Oyuncu istatistik cache (packetloss/FPS/ping) |
 | `admin_logs` | Admin eylem logları |
 | `group_logs` | Grup rol değişikliği logları |
@@ -134,5 +150,5 @@ client/           C++ client (RakSAMPClient.exe + XML config)
   bin/            RakSAMPClient.exe, RakSAMPClient.xml, group_colors.txt
 raknet/           RakNet + SA-MP RPC katmanı (SAMPRPC.cpp)
 Discord/          Node.js backend (server.js, db.js, commands/, models/)
-CHANGELOG.md      Sürüm geçmişi
+CHANGELOG.md      Sürüm geçmişi (Türkçe + English)
 ```

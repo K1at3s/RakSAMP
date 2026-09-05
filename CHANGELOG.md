@@ -1,3 +1,17 @@
+# v1.6.1
+
+## Türkçe
+- **⚡ First Blood**: kill list embed'ine ilk kan eklendi — bot savaş başında 3 sn GZ'ye girerken chat feed'inden ilk kill yakalanır (`X has killed Y (Weapon: Z) (Distance: Nm)`), embed'de ⚡ First Blood alanı olarak gösterilir (silah + mesafe ile).
+- **MVP / Top Feeder inline**: kill list embed'inde ⭐ MVP ve 🎯 Top Feeder yan yana gösterilir.
+- **README iki dilli**: `README.md` (Türkçe) + `README_EN.md` (English), komut listeleri güncellendi (yeni komutlar: `?post`, `?grole`, `?grank`, `?changepass`, `?email`, `/pm`, `/setup` lokalizasyonu).
+- **CHANGELOG iki dilli**: her sürüm Türkçe + English bölümleriyle.
+
+## English
+- **⚡ First Blood**: added to the kill list embed — while the bot enters the GZ for 3s at war start, the first kill is captured from the chat feed (`X has killed Y (Weapon: Z) (Distance: Nm)`) and shown as a ⚡ First Blood field (with weapon + distance).
+- **MVP / Top Feeder inline**: ⭐ MVP and 🎯 Top Feeder now sit side by side in the kill list embed.
+- **Bilingual README**: `README.md` (Turkish) + `README_EN.md` (English), command lists refreshed (new commands: `?post`, `?grole`, `?grank`, `?changepass`, `?email`, `/pm`, `/setup` localization).
+- **Bilingual CHANGELOG**: each version now has Turkish + English sections.
+
 # v1.6.0
 
 ## /grole / /grank — tam otomasyon

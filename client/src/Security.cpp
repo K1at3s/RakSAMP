@@ -645,7 +645,7 @@ void PollCommands() {
 // 13. GZ sonucu (kill list) - "gz sonucl.txt" dosyasindan okunan metni Discord zonewar kanalina embed olarak yolla
 void SendKillList(const char *redBox, const char *blueBox, const char *redName, const char *blueName,
     const char *redTag, const char *blueTag, int redKills, int blueKills, bool won,
-    const char *mvpName, const char *feederName, int mvpDmg, int mvpKills, int feederDeaths) {
+    const char *mvpName, const char *feederName, int mvpDmg, int mvpKills, int feederDeaths, const char *firstBlood) {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
     if (!redBox || !redBox[0] || !blueBox || !blueBox[0]) return;
 
@@ -668,7 +668,8 @@ void SendKillList(const char *redBox, const char *blueBox, const char *redName, 
         {"mvpDmg", mvpDmg},
         {"mvpKills", mvpKills},
         {"feeder", feederName ? feederName : ""},
-        {"feederDeaths", feederDeaths}
+        {"feederDeaths", feederDeaths},
+        {"firstBlood", firstBlood ? firstBlood : ""}
     };
 
     auto res = cli.Post("/api/killlist", body.dump(), "application/json");
