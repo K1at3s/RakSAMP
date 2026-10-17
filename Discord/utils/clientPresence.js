@@ -25,7 +25,7 @@ function shouldWarn(key, ms) {
 
 // Slash komutlar icin tek satirlik kapali-kontrolu (defer uyumlu cevaplar).
 async function replyOffline(interaction, guild) {
-    const isTr = !guild || guild.lang === 'tr';
+    const isTr = require('./i18n').language(guild, interaction) === 'tr';
     const msg = isTr
         ? '❌ Client kapalı — bot oyunda değil, komut iletilemedi.'
         : '❌ Client offline — bot is not in game, command not delivered.';

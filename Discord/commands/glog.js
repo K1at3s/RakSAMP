@@ -1,3 +1,5 @@
+const { language } = require('../utils/i18n');
+const { interactionTranslator } = require('../utils/i18n');
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const db = require('../db');
 const Guild = require('../models').Guild;
@@ -18,11 +20,12 @@ module.exports = {
             .setDescriptionLocalizations({ tr: 'Oyuncu adı veya account ID', 'en-US': 'Player name or account ID' })
             .setRequired(true)),
     async execute(interaction) {
+        const T = await interactionTranslator(interaction);
         const guild = await Guild.findOne({ guildId: interaction.guildId });
         if (!hasGroupPermission(interaction, guild)) {
-            return interaction.reply({ content: '❌ Bu komutu kullanmaya yetkin yok.', ephemeral: true });
+            return interaction.reply({ content: T("❌ Bu komutu kullanmaya yetkin yok.", "❌ You do not have permission to use this command."), ephemeral: true });
         }
-        const isTr = guild ? guild.lang === 'tr' : true;
+        const isTr = language(guild, interaction) === 'tr';
         const q = interaction.options.getString('oyuncu').trim();
         await interaction.deferReply({ ephemeral: true });
 
@@ -54,7 +57,7 @@ module.exports = {
         }
 
         const lines = rows.map(r => {
-            const ts = r.created_at ? new Date(r.created_at).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }) : '';
+            const ts = r.created_at ? new Date(r.created_at).toLocaleString(isTr ? 'tr-TR' : 'en-GB', { timeZone: 'Europe/Istanbul' }) : '';
             const actor = `${r.actor_name || '?'}${r.actor_acc ? ` (${r.actor_acc})` : ''}`;
             const target = `${r.target_name || '?'}${r.target_acc ? ` (${r.target_acc})` : ''}`;
             const change = `\`${r.old_rank || '-'}\` → \`${r.new_rank || '-'}\``;

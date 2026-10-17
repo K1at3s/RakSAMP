@@ -1,3 +1,4 @@
+const { language } = require('../utils/i18n');
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const db = require('../db');
 const Guild = require('../models').Guild;
@@ -18,7 +19,7 @@ module.exports = {
             .setRequired(true)),
     async execute(interaction) {
         const guild = await Guild.findOne({ guildId: interaction.guildId });
-        const isTr = guild ? guild.lang === 'tr' : true;
+        const isTr = language(guild, interaction) === 'tr';
         const q = interaction.options.getString('grup').trim();
         await interaction.deferReply({ ephemeral: true });
 
@@ -47,7 +48,7 @@ module.exports = {
             try { zones = (r.zones && r.zones !== '') ? JSON.parse(r.zones) : []; } catch { zones = []; }
             if (!Array.isArray(zones)) zones = [];
             const ids = zones.map(z => `#${z}`).join(', ');
-            const ts = r.updated_at ? new Date(r.updated_at).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }) : '';
+            const ts = r.updated_at ? new Date(r.updated_at).toLocaleString(isTr ? 'tr-TR' : 'en-GB', { timeZone: 'Europe/Istanbul' }) : '';
             embed.addFields({
                 name: `${r.group_name}${r.tag ? ` [${r.tag}]` : ''}`,
                 value: (zones.length ? ids.slice(0, 900) : (isTr ? 'zone yok' : 'no zones'))

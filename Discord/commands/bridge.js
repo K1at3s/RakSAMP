@@ -1,3 +1,5 @@
+const { language } = require('../utils/i18n');
+const { interactionTranslator } = require('../utils/i18n');
 const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models').Guild;
 const { hasGroupPermission } = require('../utils/permissions');
@@ -18,15 +20,16 @@ module.exports = {
             .setDescriptionLocalizations({ tr: 'aç/kapat (boş = mevcut durumu gösterir)', 'en-US': 'on/off (blank = show the current state)' })
             .setRequired(false)
             .addChoices(
-                { name: 'Aç (on)', value: 'on' },
-                { name: 'Kapat (off)', value: 'off' }
+                { name: "Enable (on)", name_localizations: {"tr": "Aç (on)", "en-US": "Enable (on)"}, value: 'on' },
+                { name: "Disable (off)", name_localizations: {"tr": "Kapat (off)", "en-US": "Disable (off)"}, value: 'off' }
             )),
     async execute(interaction) {
+        const T = await interactionTranslator(interaction);
         const guild = await Guild.findOne({ guildId: interaction.guildId });
         if (!hasGroupPermission(interaction, guild)) {
-            return interaction.reply({ content: '❌ Bu komutu kullanmaya yetkin yok.', ephemeral: true });
+            return interaction.reply({ content: T("❌ Bu komutu kullanmaya yetkin yok.", "❌ You do not have permission to use this command."), ephemeral: true });
         }
-        const isTr = guild ? guild.lang === 'tr' : true;
+        const isTr = language(guild, interaction) === 'tr';
         const choice = interaction.options.getString('durum');
 
         if (!choice) {

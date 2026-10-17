@@ -2,14 +2,53 @@
 #include "../src/GroupMembership.h"
 #include "../src/MuteNotice.h"
 #include "../src/KillListFormat.h"
+#include "../src/WarResultContext.h"
+#include "../src/GameMessages.h"
+#include "../src/GroupLeadership.h"
 #undef NDEBUG
 #include <cassert>
 #include <iostream>
 
 int main() {
+    assert(FindMemberLeadership("Name\tRank\tRole\tLast Active\nwashe\tBoss\tLeader\tNow", "washe") == MEMBER_ALLOWED);
+    assert(FindMemberLeadership("Name\tRank\tRole\tLast Active\nmt07\tUnderboss\tCo-Leader\tNow", "MT07") == MEMBER_ALLOWED);
+    assert(FindMemberLeadership("Name\tRank\tRole\tLast Active\nmt07\tLeader\tMember\tNow", "mt07") == MEMBER_DENIED);
+    assert(FindMemberLeadership("Name\tRank\tRole\tLast Active\nwashe_fake\tBoss\tLeader\tNow", "washe") == MEMBER_NOT_FOUND);
+    assert(FindMemberLeadership("{00FF00}Name\tRank\tRole\tLast Active\n1  {FF0000}washe\tBoss\t{FFFFFF}Leader\tNow", "washe") == MEMBER_ALLOWED);
+    assert(FindMemberLeadership("ID\tName\tRank\tRole\tLast Active\n27\twashe\tBoss\tCo Leader\tNow", "washe") == MEMBER_ALLOWED);
+    assert(FindMemberLeadership("Name\tRank\tRole\tLast Active\nwashe\tBoss\tNot Leader\tNow", "washe") == MEMBER_DENIED);
+    assert(FindMemberLeadership("washe\tLeader\tMember\tNow", "washe") == MEMBER_DENIED);
+    assert(FindMemberLeadership("washe\tCustom Rank\tCo-Leader\tNow", "washe") == MEMBER_ALLOWED);
+    assert(FindMemberLeadership("Name\tRank\tRole\tLast Active\nwashe\tBoss\tOwner\tNow", "washe") == MEMBER_ALLOWED);
+    WarResultContext firstWar;
+    firstWar.begin("CROMM", "CROMM", "Seamless Gate", "69", "bot-cromm:war-1");
+    assert(firstWar.active() && !firstWar.wonKnown && !firstWar.ownBlue());
+    firstWar.observe("ZONE WAR: The Youngsters Family takes over zone '# 69'");
+    assert(!firstWar.wonKnown);
+    firstWar.observe("ZONE WAR: CROMM loses to Seamless Gate");
+    assert(firstWar.wonKnown && !firstWar.won);
+    const WarResultContext frozen = firstWar;
+    firstWar.begin("CROMM", "CROMM", "New Opponent", "70", "bot-cromm:war-2");
+    assert(!firstWar.wonKnown && frozen.blue == "Seamless Gate" && frozen.zone == "69" && !frozen.won);
+    WarResultContext otherBot;
+    otherBot.begin("The Youngsters Family", "ehales hells", "The Youngsters Family", "19", "bot-hakixld:war-1");
+    assert(otherBot.ownBlue());
+    otherBot.observe("ZONE WAR: The Youngsters Family takes over zone '# 24'");
+    assert(!otherBot.wonKnown);
+    otherBot.observe("ZONE WAR: The Youngsters Family takes over zone '# 19'");
+    assert(otherBot.wonKnown && otherBot.won && !firstWar.wonKnown);
+    otherBot.begin("CROMM", "The Youngsters Family", "ehales hells", "19", "wrong-bot-war");
+    assert(!otherBot.active());
+    assert(IsKillListPlayerRow("Alice", "0", "0", "0", "0"));
+    assert(!IsKillListPlayerRow("uifserver.net", "", "", "", ""));
+    assert(!IsKillListPlayerRow("Alice", "0", "0", "", "0"));
+    assert(std::string(PlayerStatsMessage(true)).find("paket kaybi") != std::string::npos);
+    assert(std::string(PlayerStatsMessage(false)).find("'s PL") != std::string::npos);
     std::string largeRoster;
     for(int i = 0; i < 30; ++i) largeRoster += "Player" + std::to_string(i) + "          10   20   30   4000\n";
     const std::string largeBox = BuildKillListBox(largeRoster, 300, 600, 900, 120000);
+    assert(BuildKillListBox("", 0, 0, 0, 0, true).find("Toplam") != std::string::npos);
+    assert(BuildKillListBox("", 0, 0, 0, 0, false).find("(empty)") != std::string::npos);
     assert(largeBox.size() > 512);
     assert(largeBox.find("Player29") != std::string::npos && largeBox.find("120000") != std::string::npos);
     // Exact public chat line which caused a reconnect three seconds before GZ ended.

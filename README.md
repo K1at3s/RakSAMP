@@ -116,8 +116,18 @@ Davet için doğrulanan sonuç davetin gönderilmesidir; oyuncunun kabul etmesi 
 yeniden denemeden önce oyundaki durumu kontrol et. Süresi dolmuş kuyruk komutları sonradan çalıştırılmaz.
 Bu özellik için güncel backend ve yeniden derlenmiş istemci birlikte kullanılmalıdır.
 
+Kill listler botun HWID'si, kendi grubu, iki takım, zone ve savaş kimliğiyle gönderilir.
+Takım adları savaş başlangıcından sabitlenir; sonraki savaş/grup değişikliği sonucu yeniden adlandıramaz.
+Sonucu belirsiz, eski skor tablosu içeren veya yanlış gruba eşleşen kayıtlar gönderilmez.
+Birden fazla Discord sunucusunda kayıtlı aynı eski HWID belirsiz sayılır; bot adına özel HWID kullanılmalıdır.
+Bu doğrulama için iki botun da güncel istemciyi ve backend'i birlikte kullanması gerekir.
+`?tr` / `?en` kaydı başarısız olursa yerel seçim korunur ve backend kaydı yeniden denenir.
+
 Discord bağlantısını kaldırmak için `/unlink [hwid]` veya oyun içinde `?unlink` kullanılır.
 Oyun komutu bot/konsol ve grup lider kadrosuyla sınırlıdır; gruptan ayrılmadan yalnızca Discord'u ayırır.
+Oyuncuların yetkisi her `?unlink` isteğinde güncel `/gmembers` listesinden doğrulanır
+(Role: Leader/Co-Leader/Owner); eski üye önbelleği karar vermez. Liste okunamazsa
+izin reddi yerine doğrulama hatası gösterilir. Oyuncunun adı veya botun grubu değişirse istek iptal edilir.
 Botun kendi grup çıkışı/atılması veya grup silinmesi sistem mesajıyla doğrulanınca bağlantı otomatik kaldırılır.
 Diğer üyelerin çıkışı bağlantıyı etkilemez. `/gleave` gönderilince ilgili onay diyaloğu otomatik olarak
 **0 = Yes** ile yanıtlanır (**1 = No**); unlink için gerçek çıkış bildirimi beklenir.
@@ -130,7 +140,7 @@ Komut adları sunucu diline göre lokalize edilir (EN taban, TR lokalizasyon).
 | `/link <hwid>` | HWID'i Discord sunucusuna bağla (yönetici) |
 | `/unlink [hwid]` | Discord bağlantısını kaldır (yönetici; tek bot varsa HWID gerekmez) |
 | `/setup` / `/kurulum` | Kanalları oluştur (boş) / sil (`kapat`) (yönetici) |
-| `/setchannel` / `/kanalayarla` | Kanal ataması: log, war, gstats, group-chat, zone-war, backup, group-log, bot-commands |
+| `/setchannel` / `/kanalayarla` | Kanal ataması: war, gstats, group-chat, zone-war, backup, group-log, bot-commands; HWID/lisans logu yalnızca merkez sunucudaki sabit kanaldadır |
 | `/help` / `/yardim` | Komut listesi; `paylas:true` ile listeyi bot-komut kanalına bırakır |
 | `/gstats [group_id]` | Grup istatistikleri (oyundan çeker, ephemeral döner) |
 | `/stats [id]` | Grup/oyuncu istatistikleri (boş = kendi) |

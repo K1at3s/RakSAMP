@@ -115,6 +115,12 @@ The client waits 60 seconds for confirmation; the backend waits up to 120 second
 A timeout does not prove the action failed: check the game before retrying. Expired queued commands
 are not executed later. Deploy the updated backend and rebuilt client together.
 
+Kill lists carry a bot-specific HWID, captured own group, both teams, zone and unique war ID.
+Captured team names cannot be overwritten by the next war. Unknown outcomes, stale scoreboards,
+wrong-group results and duplicate submissions are rejected. Legacy HWIDs linked to multiple guilds
+are ambiguous and cannot route events; use the bot-specific HWIDs. Update both clients and backend
+together. Failed `?tr` / `?en` saves retain the local language and retry instead of reverting it.
+
 Use `/unlink [hwid]` in Discord or `?unlink` in game to remove Discord linking without leaving
 the game group. The in-game command requires the bot/console or group leadership. Confirmed
 departure/removal of the bot (or group deletion) also unlinks automatically; other members leaving
@@ -129,7 +135,7 @@ Command names are localized per server language (English base, Turkish localizat
 | `/link <hwid>` | Link a HWID to this Discord server (admin) |
 | `/unlink <hwid>` | Remove the link (admin) |
 | `/setup` / `/kurulum` | Create channels (empty) / delete (`off`) (admin) |
-| `/setchannel` / `/kanalayarla` | Channel assignment: log, war, gstats, group-chat, zone-war, backup, group-log, bot-commands |
+| `/setchannel` / `/kanalayarla` | Channel assignment: war, gstats, group-chat, zone-war, backup, group-log, bot-commands; HWID/license notifications use only the owner's fixed central channel |
 | `/help` / `/yardim` | Command list; `share:true` posts it to the bot-commands channel |
 | `/gstats [group_id]` | Group stats (fetched from the game, ephemeral) |
 | `/stats [id]` | Group/player stats (blank = own) |

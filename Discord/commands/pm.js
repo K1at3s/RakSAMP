@@ -1,3 +1,4 @@
+const { interactionTranslator } = require('../utils/i18n');
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
@@ -10,22 +11,23 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('pm')
         .setNameLocalizations({ tr: 'mesaj', 'en-US': 'pm' })
-        .setDescription('Oyun icindeki bir oyuncuya mesaj gonderir')
+        .setDescription('Sends a message to an in-game player')
         .setDescriptionLocalizations({ tr: 'Oyun içindeki bir oyuncuya mesaj gönderir', 'en-US': 'Sends a message to an in-game player' })
         .addStringOption(o => o.setName('oyuncu')
             .setNameLocalizations({ tr: 'oyuncu', 'en-US': 'player' })
-            .setDescription('Hedef oyuncu adi')
+            .setDescription('Target player name')
             .setDescriptionLocalizations({ tr: 'Hedef oyuncu adı', 'en-US': 'Target player name' })
             .setRequired(true))
         .addStringOption(o => o.setName('mesaj')
             .setNameLocalizations({ tr: 'mesaj', 'en-US': 'message' })
-            .setDescription('Gonderilecek mesaj')
+            .setDescription('Message to send')
             .setDescriptionLocalizations({ tr: 'Gönderilecek mesaj', 'en-US': 'Message to send' })
             .setRequired(true)),
     async execute(interaction) {
+        const T = await interactionTranslator(interaction);
         const guild = await Guild.findOne({ guildId: interaction.guildId });
         if (!guild || !guild.linkedHwids || guild.linkedHwids.length === 0) {
-            return interaction.reply({ content: '❌ Bağlı RakSAMP istemcisi yok.', ephemeral: true });
+            return interaction.reply({ content: T("❌ Bağlı RakSAMP istemcisi yok.", "❌ No linked RakSAMP client."), ephemeral: true });
         }
         const hwid = guild.linkedHwids[0];
         if (!isOnline(hwid)) return replyOffline(interaction, guild);

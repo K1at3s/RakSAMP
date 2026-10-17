@@ -1,3 +1,4 @@
+const { language } = require('../utils/i18n');
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const db = require('../db');
 const Guild = require('../models').Guild;
@@ -19,7 +20,7 @@ module.exports = {
             .setRequired(true)),
     async execute(interaction) {
         const guild = await Guild.findOne({ guildId: interaction.guildId });
-        const isTr = guild ? guild.lang === 'tr' : true;
+        const isTr = language(guild, interaction) === 'tr';
         const q = interaction.options.getString('oyuncu').trim();
         await interaction.deferReply({ ephemeral: true });
 

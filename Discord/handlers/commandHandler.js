@@ -1,3 +1,4 @@
+const { interactionTranslator, translator } = require('../utils/i18n');
 ﻿const fs = require('fs');
 const path = require('path');
 const { Collection } = require('discord.js');
@@ -42,7 +43,8 @@ async function handleInteraction(interaction) {
         await cmd.execute(interaction);
     } catch (e) {
         console.error(`Komut hatasi (${interaction.commandName}):`, e);
-        const msg = { content: '❌ Komut calistirilirken hata olustu.', ephemeral: true };
+        const T = await interactionTranslator(interaction).catch(() => translator(null, interaction));
+        const msg = { content: T('❌ Komut çalıştırılırken hata oluştu.', '❌ An error occurred while running this command.'), ephemeral: true };
         if (interaction.replied || interaction.deferred) {
             await interaction.followUp(msg).catch(() => {});
         } else {

@@ -1,3 +1,4 @@
+const { interactionTranslator } = require('../utils/i18n');
 const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
@@ -8,14 +9,15 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('admins')
         .setNameLocalizations({ tr: 'adminler', 'en-US': 'admins' })
-        .setDescription('Bagli RakSAMP istemcisinden online admin listesini ister')
+        .setDescription('Requests the online admin list from the linked RakSAMP client')
         .setDescriptionLocalizations({ tr: 'Bağlı RakSAMP istemcisinden online admin listesini ister', 'en-US': 'Requests the online admin list from the linked RakSAMP client' }),
     async execute(interaction) {
+        const T = await interactionTranslator(interaction);
         const guild = await Guild.findOne({ guildId: interaction.guildId });
 
         if (!guild || !guild.linkedHwids || guild.linkedHwids.length === 0) {
             return interaction.reply({
-                content: '❌ Bu sunucu henuz bir RakSAMP istemcisine bagli degil. Once `/link <hwid>` kullanin.',
+                content: T("❌ Bu sunucu henuz bir RakSAMP istemcisine bagli degil. Once `/link <hwid>` kullanin.", "❌ No RakSAMP client is linked to this server. Use `/link <hwid>` first."),
                 ephemeral: true
             });
         }

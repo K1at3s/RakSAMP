@@ -208,23 +208,29 @@ void ToggleDiscordChat() {
 }
 
 // ?tr/?en: bot mesaj dilini backend'e (MongoDB Guild.lang) yazar
+static bool s_langPending = false;
+static DWORD s_langAttemptAt = 0;
+static void TrySaveBotLang() {
+    if(!s_langPending || !g_isEngineActive || g_sessionToken.empty()) return;
+    const DWORD now = GetTickCount();
+    if(s_langAttemptAt && now - s_langAttemptAt < 5000) return;
+    s_langAttemptAt = now;
+    try {
+        httplib::Client cli(g_backendBase);
+        cli.set_connection_timeout(3); cli.set_read_timeout(3);
+        json body = {{"hwid", g_myHWID}, {"lang", g_langTurkish ? "tr" : "en"}};
+        auto res = cli.Post("/api/lang/set", body.dump(), "application/json");
+        if(res && res->status == 200 && json::parse(res->body).value("success", false)) {
+            s_langPending = false;
+            Log("[LANG] Saved for HWID %s: %s", g_myHWID.c_str(), g_langTurkish ? "tr" : "en");
+        } else Log("[LANG] Save failed; retaining local language and retrying.");
+    } catch(...) { Log("[LANG] Save failed; retaining local language and retrying."); }
+}
 void ServerSetBotLang(bool turkish) {
-    if (!g_isEngineActive || g_sessionToken.empty()) return;
-
-    httplib::Client cli(g_backendBase);
-    cli.set_connection_timeout(5);
-
-    json body = {
-        {"hwid", g_myHWID},
-        {"lang", turkish ? "tr" : "en"}
-    };
-
-    auto res = cli.Post("/api/lang/set", body.dump(), "application/json");
-    if (res && res->status == 200) {
-        std::cout << (turkish ? "­sîÉ [LANG] Turkce kaydedildi (MongoDB)\n" : "­sîÉ [LANG] English saved (MongoDB)\n");
-    } else {
-        std::cout << "-Uá´©Å [LANG] Kaydedilemedi (HTTP " << (res ? res->status : -1) << ")\n";
-    }
+    g_langTurkish = turkish;
+    s_langPending = true;
+    s_langAttemptAt = 0;
+    TrySaveBotLang();
 }
 
 static bool s_unlinkPending = false;
@@ -333,7 +339,7 @@ void PollDiscordChat() {
         // Bot dilini backend'den senkronla. Backend yalnizca guild bulabildigi
         // zaman lang g�nderir; guild yoksa alan yoktur ve lokal secim (?tr/?en)
         // korunur - backend'in "en" varsayilani ?tr'yi ezmesin.
-        if (data.contains("lang") && data["lang"].is_string()) {
+        if (!s_langPending && data.contains("lang") && data["lang"].is_string()) {
             std::string lang = data["lang"].get<std::string>();
             bool bTr = (lang == "tr");
             if (bTr != g_langTurkish) {
@@ -502,10 +508,10 @@ void ToggleWelcomeBackEx(int bForceOnOff) {
 
     char szMsg[96];
     if (bOk)
-        sprintf_s(szMsg, sizeof(szMsg), g_langTurkish ? "!Welcome mesajlari: %s." : "!Welcome messages: %s.",
+        sprintf_s(szMsg, sizeof(szMsg), g_langTurkish ? "!Karsilama mesajlari: %s." : "!Welcome messages: %s.",
             enabled ? (g_langTurkish ? "A�IK" : "ON") : (g_langTurkish ? "KAPALI" : "OFF"));
     else
-        sprintf_s(szMsg, sizeof(szMsg), g_langTurkish ? "!Welcome mesajlari de�i�tirilemedi." : "!Could not change welcome messages.");
+        sprintf_s(szMsg, sizeof(szMsg), g_langTurkish ? "!Karsilama mesajlari degistirilemedi." : "!Could not change welcome messages.");
     sendChat(szMsg);
     std::cout << (bOk ? (enabled ? "­sæï [WELCOME] Welcome back A�IK\n" : "­sæï [WELCOME] Welcome back KAPALI\n")
                       : "-Uá´©Å [WELCOME] Durum de�i�tirilemedi\n");
@@ -610,6 +616,7 @@ void SendDiscordCommandStatus(const char *requesterId, const char *status, const
 }
 
 void PollCommands() {
+    TrySaveBotLang();
     ProcessDiscordUnlink();
     if(s_unlinkPending) return;
     if (!g_isEngineActive || g_sessionToken.empty()) return;
@@ -747,15 +754,19 @@ void PollCommands() {
 void SendKillList(const char *redBox, const char *blueBox, const char *redName, const char *blueName,
     const char *redTag, const char *blueTag, int redKills, int blueKills, bool won,
     const char *mvpName, const char *feederName, int mvpDmg, int mvpKills, int feederDeaths,
-    const char *firstBlood, const char *topWeapons) {
+    const char *firstBlood, const char *topWeapons, const char *ownGroup, const char *zone, const char *warId, bool wonKnown) {
     if (!g_isEngineActive || g_sessionToken.empty()) return;
     if (!redBox || !redBox[0] || !blueBox || !blueBox[0]) return;
 
+    try {
     httplib::Client cli(g_backendBase);
     cli.set_connection_timeout(5);
 
     json body = {
         {"hwid", g_myHWID},
+        {"ownGroup", ownGroup ? ownGroup : ""}, {"zone", zone ? zone : ""},
+        {"warId", warId ? warId : ""}, {"wonKnown", wonKnown},
+        {"lang", g_langTurkish ? "tr" : "en"},
         {"playerName", std::string(g_szNickName ? g_szNickName : "Bir oyuncu")},
         {"won", won ? 1 : 0},
         {"redName", redName ? redName : ""},
@@ -775,10 +786,16 @@ void SendKillList(const char *redBox, const char *blueBox, const char *redName, 
         {"topWeapons", topWeapons ? topWeapons : ""}
     };
 
+    for(auto it = body.begin(); it != body.end(); ++it) {
+        if(it.value().is_string()) { const std::string raw = it.value().get<std::string>(); it.value() = GameChatToUtf8(raw.c_str()); }
+    }
     auto res = cli.Post("/api/killlist", body.dump(), "application/json");
-    if (res && res->status == 200) {
+    if (res && res->status == 200 && json::parse(res->body).value("success", false)) {
+        Log("[KILLLIST] Delivered: bot=%s own=%s zone=%s war=%s", g_szNickName, ownGroup, zone, warId);
         std::cout << "-Uo´©Å [KILLLIST] Discord'a GZ sonucu g�nderildi!\n";
     } else {
+        Log("[KILLLIST] Not delivered: bot=%s war=%s HTTP=%d body=%.180s", g_szNickName, warId, res ? res->status : -1, res ? res->body.c_str() : "no response");
         std::cout << "-Uá´©Å [KILLLIST] G�nderilemedi (HTTP " << (res ? res->status : -1) << ")\n";
     }
+    } catch(const std::exception &err) { Log("[KILLLIST] Delivery error: %s", err.what()); }
 }

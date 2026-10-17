@@ -1,3 +1,4 @@
+const { language } = require('../utils/i18n');
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const Guild = require('../models').Guild;
 
@@ -8,8 +9,8 @@ const Guild = require('../models').Guild;
 //   EN: /setup action:off   -> close
 // Kanallar otomatik OLUSTURULMAZ; yalnizca bu komutla kurulur.
 const CATEGORY = 'RakSAMP';
+// HWID/license notifications use the owner's fixed channel, never guild setup.
 const CHANNELS = [
-    { key: 'logChannelId', tr: '📜-lisans-log', en: '📜-license-log' },
     { key: 'warChannelId', tr: '⚔️-savas', en: '⚔️-war' },
     { key: 'gstatsChannelId', tr: '📊-gstats', en: '📊-gstats' },
     { key: 'groupChatChannelId', tr: '💬-grup-chat', en: '💬-group-chat' },
@@ -24,18 +25,18 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('setup')
         .setNameLocalizations({ tr: 'kurulum', 'en-US': 'setup' })
-        .setDescription('Botun kanallarini olusturur veya kapatir')
+        .setDescription('Creates or closes the bot channels')
         .setDescriptionLocalizations({ tr: 'Botun kanallarını oluşturur veya kapatır', 'en-US': 'Creates or closes the bot channels' })
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addStringOption(o => o
             .setName('islem')
             .setNameLocalizations({ tr: 'islem', 'en-US': 'action' })
-            .setDescription('Kapatma islemi (bos = kanallari olustur)')
+            .setDescription('Close action (empty = create channels)')
             .setDescriptionLocalizations({ tr: 'Kapatma işlemi (boş = kanalları oluştur)', 'en-US': 'Close action (empty = create channels)' })
             .setRequired(false)
             .addChoices(
-                { name: 'Kapat (kanallari sil)', value: 'kapat' },
-                { name: 'Close (delete channels)', value: 'off' }
+                { name: 'Close (delete channels)', name_localizations: { tr: 'Kapat (kanalları sil)' }, value: 'kapat' },
+                { name: 'Off (delete channels)', name_localizations: { tr: 'Kapat (kanalları sil)' }, value: 'off' }
             )),
     async execute(interaction) {
         const action = interaction.options.getString('islem') || '';
@@ -48,7 +49,7 @@ async function create(interaction) {
     await interaction.deferReply();
     const guild = interaction.guild;
     const gRec = await Guild.findOne({ guildId: guild.id });
-    const isTr = gRec ? gRec.lang === 'tr' : true;
+    const isTr = language(gRec, interaction) === 'tr';
 
     const updates = {};
     const created = [];
@@ -103,7 +104,7 @@ async function close(interaction) {
     await interaction.deferReply();
     const guild = interaction.guild;
     const gRec = await Guild.findOne({ guildId: guild.id });
-    const isTr = gRec ? gRec.lang === 'tr' : true;
+    const isTr = language(gRec, interaction) === 'tr';
 
     if (!gRec) {
         return interaction.editReply(isTr ? '❌ Bu sunucu icin kayit yok.' : '❌ No record for this server.');
@@ -133,7 +134,7 @@ async function close(interaction) {
             if (cat) await cat.delete('RakSAMP /kurulum kapat');
             cleared.push('kategori');
         } catch (e) {
-            failed.push('kategori');
+            failed.push(isTr ? 'kategori' : 'category');
         }
         updates.categoryId = null;
     }
