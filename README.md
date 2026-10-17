@@ -101,17 +101,34 @@ Tüm komutlar grup chat'ine `?` önekiyle yazılır. `!` önekli mesajlar Discor
 | `?gm <mesaj>` | Global welcome mesajı alias |
 | `?discordchat on/off` | Discord grup chat köprüsü |
 | `?guildid <id>` | HWID'i Discord sunucusuna bağla |
+| `?unlink` | Discord bağlantısını kaldır (bot/konsol veya grup lider kadrosu); oyun grubundan çıkmaz |
 
 ---
 
 ## 🤖 Discord Slash Komutları
+
+`/grole`, `/grank`, `/gkick` ve `/ginv` komutlarının durumları aynı yanıtta güncellenir:
+**Bekliyor → İletildi → İşleniyor → Tamamlandı / Başarısız / Sonuç alınamadı**.
+Tamamlandı yalnızca botun doğru hedef üzerindeki işlemi oyun sistem mesajıyla doğrulandığında gösterilir.
+Davet için doğrulanan sonuç davetin gönderilmesidir; oyuncunun kabul etmesi değildir.
+İstemci başka bir grup işlemiyle meşgulse yeni işlem reddedilir. Üye/rol bulunamadığında neden gösterilir.
+İstemci sonucu 60 saniye, backend toplam 120 saniye bekler. Sonuç alınamazsa işlem uygulanmış olabilir;
+yeniden denemeden önce oyundaki durumu kontrol et. Süresi dolmuş kuyruk komutları sonradan çalıştırılmaz.
+Bu özellik için güncel backend ve yeniden derlenmiş istemci birlikte kullanılmalıdır.
+
+Discord bağlantısını kaldırmak için `/unlink [hwid]` veya oyun içinde `?unlink` kullanılır.
+Oyun komutu bot/konsol ve grup lider kadrosuyla sınırlıdır; gruptan ayrılmadan yalnızca Discord'u ayırır.
+Botun kendi grup çıkışı/atılması veya grup silinmesi sistem mesajıyla doğrulanınca bağlantı otomatik kaldırılır.
+Diğer üyelerin çıkışı bağlantıyı etkilemez. `/gleave` gönderilince ilgili onay diyaloğu otomatik olarak
+**0 = Yes** ile yanıtlanır (**1 = No**); unlink için gerçek çıkış bildirimi beklenir.
+Backend erişilemiyorsa unlink 5 saniyede bir yeniden denenir; bu sırada köprü durdurulur.
 
 Komut adları sunucu diline göre lokalize edilir (EN taban, TR lokalizasyon).
 
 | Komut (EN / TR) | Açıklama |
 |-------|----------|
 | `/link <hwid>` | HWID'i Discord sunucusuna bağla (yönetici) |
-| `/unlink <hwid>` | Bağlantıyı kaldır (yönetici) |
+| `/unlink [hwid]` | Discord bağlantısını kaldır (yönetici; tek bot varsa HWID gerekmez) |
 | `/setup` / `/kurulum` | Kanalları oluştur (boş) / sil (`kapat`) (yönetici) |
 | `/setchannel` / `/kanalayarla` | Kanal ataması: log, war, gstats, group-chat, zone-war, backup, group-log, bot-commands |
 | `/help` / `/yardim` | Komut listesi; `paylas:true` ile listeyi bot-komut kanalına bırakır |

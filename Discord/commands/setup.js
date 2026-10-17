@@ -7,15 +7,16 @@ const Guild = require('../models').Guild;
 //   EN: /setup              -> create
 //   EN: /setup action:off   -> close
 // Kanallar otomatik OLUSTURULMAZ; yalnizca bu komutla kurulur.
+const CATEGORY = 'RakSAMP';
 const CHANNELS = [
-    { key: 'logChannelId', name: '📜-lisans-log' },
-    { key: 'warChannelId', name: '⚔️-war' },
-    { key: 'gstatsChannelId', name: '📊-gstats' },
-    { key: 'groupChatChannelId', name: '💬-grup-chat' },
-    { key: 'zoneWarChannelId', name: '⚔️-zone-war' },
-    { key: 'backupChannelId', name: '🆘-backup' },
-    { key: 'groupLogChannelId', name: '📋-grup-log' },
-    { key: 'botCommandsChannelId', name: '🤖-bot-komut' }
+    { key: 'logChannelId', tr: '📜-lisans-log', en: '📜-license-log' },
+    { key: 'warChannelId', tr: '⚔️-savas', en: '⚔️-war' },
+    { key: 'gstatsChannelId', tr: '📊-gstats', en: '📊-gstats' },
+    { key: 'groupChatChannelId', tr: '💬-grup-chat', en: '💬-group-chat' },
+    { key: 'zoneWarChannelId', tr: '⚔️-bolge-savas', en: '⚔️-zone-war' },
+    { key: 'backupChannelId', tr: '🆘-yardim', en: '🆘-backup' },
+    { key: 'groupLogChannelId', tr: '📋-grup-log', en: '📋-group-log' },
+    { key: 'botCommandsChannelId', tr: '🤖-bot-komut', en: '🤖-bot-commands' }
 ];
 const CHANNEL_FIELDS = CHANNELS.map(c => c.key);
 
@@ -53,13 +54,27 @@ async function create(interaction) {
     const created = [];
     const skipped = [];
 
+    // Once kategori: kanallar onun altinda acilir. Everyone'a kapali
+    // (kullanici sonradan kendisi ayarlar); izinli rol varsa o rol gorur.
+    let parentId = null;
+    const roleId0 = gRec ? gRec.allowedRoleId : null;
+    const baseOverwrites = [{ id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] }];
+    if (roleId0) baseOverwrites.push({ id: roleId0, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] });
+    try {
+        const cat = await guild.channels.create({ name: CATEGORY, type: ChannelType.GuildCategory, permissionOverwrites: baseOverwrites });
+        parentId = cat.id;
+        updates.categoryId = cat.id;
+    } catch (e) { /* kategorisiz devam */ }
+
     for (const c of CHANNELS) {
+        const cname = isTr ? c.tr : c.en;
         try {
-            const ch = await guild.channels.create({ name: c.name, type: ChannelType.GuildText });
+            const ch = await guild.channels.create({ name: cname, type: ChannelType.GuildText, ...(parentId ? { parent: parentId } : {}) });
+            try { if (parentId) await ch.lockPermissions(); } catch (e) {}
             updates[c.key] = ch.id;
-            created.push(c.name);
+            created.push(cname);
         } catch (e) {
-            skipped.push(c.name);
+            skipped.push(cname);
         }
     }
 
@@ -109,6 +124,18 @@ async function close(interaction) {
             failed.push(f); // kanal zaten silinmis olabilir — DB yine de temizlenir
         }
         updates[f] = null;
+    }
+
+    // Kategori DB'deki ID ile silinir.
+    if (gRec.categoryId) {
+        try {
+            const cat = await guild.channels.fetch(gRec.categoryId);
+            if (cat) await cat.delete('RakSAMP /kurulum kapat');
+            cleared.push('kategori');
+        } catch (e) {
+            failed.push('kategori');
+        }
+        updates.categoryId = null;
     }
 
     if (Object.keys(updates).length) {

@@ -32,6 +32,10 @@ function makeModel(table, def) {
         const inst = {};
         for (const [prop, c] of Object.entries(setSql)) {
             inst[prop] = typeof c.def === 'function' ? c.def() : (c.def !== undefined ? c.def : null);
+            // Each document owns its JSON defaults; mutating one must not affect another.
+            if (c.type === 'json' && inst[prop] !== null) {
+                inst[prop] = JSON.parse(JSON.stringify(inst[prop]));
+            }
         }
         Object.assign(inst, doc);
         inst.__exists = false;
@@ -152,8 +156,10 @@ async function init() {
         packetloss DOUBLE NULL,
         fps INT NULL,
         ping INT NULL,
+        account_id INT NULL,
         updated_at DATETIME NULL
     )`);
+    await p.execute(`ALTER TABLE players ADD COLUMN account_id INT NULL`).catch(() => {});
     // Kalici zone->sahip haritasi gangs.tablosundaki zones JSON alanindadir
     // (gruba gore TEK satir). Ayri zones tablosu YOK ÔCo tek dogru kaynak gangs.
     // Ogrenilen grup adi + kisa tag haritasi (gruba gore TEK satir; zone kaydi yok).
@@ -185,6 +191,7 @@ async function init() {
     // Grup log (?post) + bot komut kanallari (yeni) — mevcut tabloya kolon ekle
     await p.execute(`ALTER TABLE guilds ADD COLUMN group_log_channel_id VARCHAR(255) NULL`).catch(() => {});
     await p.execute(`ALTER TABLE guilds ADD COLUMN bot_commands_channel_id VARCHAR(255) NULL`).catch(() => {});
+    await p.execute(`ALTER TABLE guilds ADD COLUMN category_id VARCHAR(255) NULL`).catch(() => {});
     // Welcome Discord kanali kaldirildi (welcome oyun ici kalir) — eski kolon DB'den duser.
     await p.execute(`ALTER TABLE guilds DROP COLUMN welcome_channel_id`).catch(() => {});
     // Index se├gici ekleme yok
@@ -212,6 +219,8 @@ async function init() {
     // Grup rol degisikligi loglari: "(Ad)(accid) changed the rank of Hedef(accid) ..."
     await p.execute(`CREATE TABLE IF NOT EXISTS group_logs (
         id INT AUTO_INCREMENT PRIMARY KEY,
+        hwid VARCHAR(64) NULL,
+        group_name VARCHAR(96) NULL,
         actor_name VARCHAR(64) NULL,
         actor_acc BIGINT NULL,
         target_name VARCHAR(64) NULL,
@@ -221,6 +230,8 @@ async function init() {
         reason VARCHAR(255) NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
+    await p.execute(`ALTER TABLE group_logs ADD COLUMN hwid VARCHAR(64) NULL`).catch(() => {});
+    await p.execute(`ALTER TABLE group_logs ADD COLUMN group_name VARCHAR(96) NULL`).catch(() => {});
     // Roster Discord mesaj kaydi (?gmembers bitiminde kanala atilan/duzenlenen link mesaji)
     await p.execute(`CREATE TABLE IF NOT EXISTS roster_messages (
         guild_id VARCHAR(255) PRIMARY KEY,

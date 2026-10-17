@@ -6,8 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "bun --watch server.js",
-    "test": "bun db.selftest.js",
-    "test:node": "node db.selftest.js"
+    "test": "bun db.selftest.js && bun commandTracking.selftest.js && bun unlink.selftest.js",
+    "test:node": "node db.selftest.js && node commandTracking.selftest.js && node unlink.selftest.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",

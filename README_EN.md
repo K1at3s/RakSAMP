@@ -106,6 +106,22 @@ All commands are typed with the `?` prefix in the group chat. Messages prefixed 
 
 ## 🤖 Discord Slash Commands
 
+`/grole`, `/grank`, `/gkick`, and `/ginv` update the same reply as they progress:
+**Queued → Delivered → Processing → Completed / Failed / No result received**.
+Completion requires a game system event matching the bot, target, action, and requested role/rank.
+For invites, completion confirms the invitation was sent, not that the player accepted it.
+Concurrent group actions are rejected as busy; missing members or role/rank options report a failure.
+The client waits 60 seconds for confirmation; the backend waits up to 120 seconds in total.
+A timeout does not prove the action failed: check the game before retrying. Expired queued commands
+are not executed later. Deploy the updated backend and rebuilt client together.
+
+Use `/unlink [hwid]` in Discord or `?unlink` in game to remove Discord linking without leaving
+the game group. The in-game command requires the bot/console or group leadership. Confirmed
+departure/removal of the bot (or group deletion) also unlinks automatically; other members leaving
+do not. An explicitly sent `/gleave` automatically confirms its leave dialog with **0 = Yes**
+(**1 = No**), then waits for the actual game exit event. Failed unlink requests retry every five
+seconds while the bridge is paused. Both the backend and client must be updated.
+
 Command names are localized per server language (English base, Turkish localization).
 
 | Command (EN / TR) | Description |

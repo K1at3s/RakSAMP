@@ -7,7 +7,8 @@ function hasGroupPermission(interaction, guild) {
     if (!guild || !guild.allowedRoleId) return true;
     const member = interaction.member;
     if (!member) return false;
-    if (member.roles && member.roles.cache.has(guild.allowedRoleId)) return true;
+    if (member.roles?.cache?.has(guild.allowedRoleId) ||
+        (Array.isArray(member.roles) && member.roles.includes(guild.allowedRoleId))) return true;
     if (member.permissions && (member.permissions.has('Administrator') || member.permissions.has('ManageGuild'))) return true;
     if (interaction.guild && interaction.guild.ownerId === interaction.user.id) return true;
     return false;

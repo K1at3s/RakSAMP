@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
+const { isOnline, replyOffline } = require('../utils/clientPresence');
 const { setPendingInteraction } = require('../utils/pendingReplies');
 
 // /pm: oyun içindeki bir oyuncuya mesaj gönderir (grup chat'inde "[Discord][isim]: mesaj").
@@ -27,6 +28,7 @@ module.exports = {
             return interaction.reply({ content: '❌ Bağlı RakSAMP istemcisi yok.', ephemeral: true });
         }
         const hwid = guild.linkedHwids[0];
+        if (!isOnline(hwid)) return replyOffline(interaction, guild);
         const target = interaction.options.getString('oyuncu').slice(0, 63);
         const message = interaction.options.getString('mesaj').slice(0, 200);
         const isTr = guild.lang === 'tr';

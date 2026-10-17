@@ -25,6 +25,20 @@ async function sendToGuildChannel(guild, field, { embed, content, files } = {}) 
         else if (content) await channel.send(content);
         return channelId;
     } catch (e) {
+        // Silinmis kanal (Unknown Channel 10003/404): kaydi temizle ki her
+        // gonderimde patlamasin; /setchannel veya /kurulum ile yeniden atanir.
+        if (e && (e.code === 10003 || e.status === 404)) {
+            try {
+                const { Guild } = require('../models');
+                const upd = {};
+                upd[field] = null;
+                if (guild && guild.guildId) await Guild.findOneAndUpdate({ guildId: guild.guildId }, upd);
+                console.log(`🧹 ${field} temizlendi (kanal silinmis id=${channelId}, guild=${guild ? guild.guildId : '?'}). /setchannel ile yeniden ata.`);
+            } catch (err2) {
+                console.error(`Kanal temizleme hatasi (${field}):`, err2.message);
+            }
+            return null;
+        }
         console.error(`Discord gonderim hatasi (${field}):`, e);
         return null;
     }

@@ -82,6 +82,21 @@ const { model, init } = require('./db');
     assert.strictEqual(doc.createdAt, 'NOW');
     assert.ok(!doc.groupChatEnabled); // defaults yolu: ham 0 (truthiness app'te kullanilir)
 
+    // A newly created document must not share its default HWID list with others.
+    const isolated = await Guild.create({ guildId: 'isolated' });
+    isolated.linkedHwids.push('PRIVATE-HWID');
+    await isolated.save();
+    const fresh = await Guild.create({ guildId: 'fresh' });
+    assert.deepStrictEqual(fresh.linkedHwids, []);
+    assert.deepStrictEqual(doc.linkedHwids, []);
+
+    const { hasGroupPermission } = require('./utils/permissions');
+    const restricted = { allowedRoleId: 'allowed-role' };
+    assert.strictEqual(hasGroupPermission({ member: { roles: ['allowed-role'] } }, restricted), true);
+    assert.strictEqual(hasGroupPermission({ member: { roles: ['other-role'] } }, restricted), false);
+    assert.strictEqual(hasGroupPermission({ member: { roles: { cache: new Set(['allowed-role']) } } }, restricted), true);
+    assert.strictEqual(hasGroupPermission({ member: { roles: {} } }, restricted), false);
+
     // $addToSet (link.js) — dedup
     const a = await Guild.findOneAndUpdate({ guildId: 'g1' }, { $addToSet: { linkedHwids: 'HWID-A' } }, {});
     assert.deepStrictEqual(a.linkedHwids, ['HWID-A']);

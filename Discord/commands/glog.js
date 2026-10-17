@@ -27,20 +27,25 @@ module.exports = {
         await interaction.deferReply({ ephemeral: true });
 
         const cols = 'id, actor_name, actor_acc, target_name, target_acc, old_rank, new_rank, created_at';
+        const hwids = (guild && Array.isArray(guild.linkedHwids)) ? guild.linkedHwids.filter(h => h) : [];
+        if (!hwids.length) {
+            return interaction.editReply({ content: isTr ? '❌ Bu sunucuya bağlı bot yok — önce ?guildid ile bağla.' : '❌ No linked bot for this server — link with ?guildid first.' });
+        }
+        const inPh = hwids.map(() => '?').join(',');
         let rows;
         if (/^\d+$/.test(q)) {
             rows = await db.execute(
                 `SELECT ${cols} FROM group_logs
-                 WHERE target_acc = ? OR actor_acc = ?
+                 WHERE hwid IN (${inPh}) AND (target_acc = ? OR actor_acc = ?)
                  ORDER BY id DESC LIMIT 25`,
-                [Number(q), Number(q)]
+                [...hwids, Number(q), Number(q)]
             );
         } else {
             rows = await db.execute(
                 `SELECT ${cols} FROM group_logs
-                 WHERE LOWER(target_name) LIKE LOWER(?) OR LOWER(actor_name) LIKE LOWER(?)
+                 WHERE hwid IN (${inPh}) AND (LOWER(target_name) LIKE LOWER(?) OR LOWER(actor_name) LIKE LOWER(?))
                  ORDER BY id DESC LIMIT 25`,
-                [`%${q}%`, `%${q}%`]
+                [...hwids, `%${q}%`, `%${q}%`]
             );
         }
 

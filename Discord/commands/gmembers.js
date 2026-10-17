@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
+const { isOnline, replyOffline } = require('../utils/clientPresence');
 const { setPendingInteraction } = require('../utils/pendingReplies');
 
 module.exports = {
@@ -21,6 +22,7 @@ module.exports = {
 
         const L = (tr, en) => (guild.lang === 'tr' ? tr : en);
         const hwid = guild.linkedHwids[0];
+        if (!isOnline(hwid)) return replyOffline(interaction, guild);
         queueCommand(hwid, { type: 'gmembers', requesterId: interaction.id });
         setPendingInteraction(interaction.id, interaction);
 

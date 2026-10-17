@@ -60,11 +60,11 @@ void SaveLang(); // bot_lang.txt'ye yazar (netrpc.cpp; Security.cpp poll senkron
 void HandleGroupCommand(const char *pGroupMsg, int iSenderId);
 std::string GenerateSecureHWID();
 void CopyToClipboard(const std::string& text);
-bool PerformSecurityHandshake(const std::string& serverUrl);
+bool PerformSecurityHandshake(const std::string& serverUrl, const char *nick);
 void TriggerWarHelp(const char *playerName);
 int HandleCapturedDialog(int wDialogID, const char *szTitle, const char *szInfo);
 void ToggleDiscordChat();
-void SendGroupChatToDiscord(const char *text);
+void SendGroupChatToDiscord(const char *text, const char *author);
 void PollDiscordChat();
 // ?tr/?en: dili MongoDB'ye (Guild.lang) yazar; polling bu degeri geri okur.
 void ServerSetBotLang(bool turkish);
@@ -75,6 +75,15 @@ void SendAdminsToDiscord(const char *szInfo);
 void SendBackupCall(const char *playerName);
 void SendWelcomeBack(const char *playerName);
 void PollCommands();
+void RequestDiscordUnlink(bool groupExit = false);
+void ProcessDiscordUnlink();
+void MarkGroupLeaveRequest();
+bool HandleGroupLeaveDialog(int dialogId, const char *title, const char *info);
+
+void SendDiscordCommandStatus(const char *requesterId, const char *status, const char *reason = "");
+bool BeginDiscordGroupCommand(const char *type, const char *requesterId, const char *target, const char *value);
+void FinishDiscordGroupCommand(const char *type, const char *status, const char *reason);
+
 void SendKillList(const char *redBox, const char *blueBox, const char *redName, const char *blueName,
     const char *redTag, const char *blueTag, int redKills, int blueKills, bool won,
     const char *mvpName, const char *feederName, int mvpDmg, int mvpKills, int feederDeaths,
@@ -121,8 +130,8 @@ extern std::string g_grankRank;
 extern int  g_grankPhase;
 extern unsigned long g_grankStartTime;
 extern int  g_grankPage;
-void StartGrole(const char *target, const char *role);
-void StartGrank(const char *target, const char *rank);
+void StartGrole(const char *target, const char *role, const char *requesterId = NULL);
+void StartGrank(const char *target, const char *rank, const char *requesterId = NULL);
 void StartPm(const char *target, const char *message, const char *discordUser, const char *requesterId);
 // Ortak uye-tiklama aday mekanizmasi (grole+grank): sunucunun hangi buton/item
 // kombinasyonunu kabul ettigi bilinmiyor, adaylar sirali denenir (ProcessZoneScan).
@@ -161,7 +170,7 @@ extern int g_grankListPage;
 extern unsigned long g_grankListStartTime;
 void StartGrankList(const char *requesterId, const char *guildId, const char *hwid);
 void FinishGrankListAndPost();
-void StartGkick(const char *target, const char *reason);
+void StartGkick(const char *target, const char *reason, const char *requesterId = NULL);
 void StartGkickList(const char *requesterId, const char *guildId, const char *hwid);
 void FinishGkickListAndPost();
 // /gstats sonucundan "- Tag: [XX]" cekip grup etiketini gunceller

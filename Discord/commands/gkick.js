@@ -1,6 +1,8 @@
 const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
+const { submit: submitTrackedCommand } = require('../utils/commandTracker');
+const { isOnline, replyOffline } = require('../utils/clientPresence');
 const { setPendingInteraction } = require('../utils/pendingReplies');
 
 module.exports = {
@@ -20,13 +22,14 @@ module.exports = {
             return interaction.reply({ content: '❌ Bu komutu kullanmaya yetkin yok.', ephemeral: true });
         }
         const hwid = guild.linkedHwids[0];
+        if (!isOnline(hwid)) return replyOffline(interaction, guild);
         const name = interaction.options.getString('name');
         const reason = interaction.options.getString('reason') || '';
 
         // Direkt mod: name verildiyse direk otomasyona gonder (sebep bos olabilir)
         if (name) {
-            queueCommand(hwid, { type: 'gkick', target: name, reason, requesterId: interaction.id });
-            await interaction.reply({ content: `✅ \`/gkick ${name}\` kuyruga alindi — sayfali listede araniyor...`, ephemeral: true });
+            await submitTrackedCommand(interaction, guild, hwid, { type: 'gkick', target: name, reason });
+
             console.log(`👢 [GKICK] Direkt: ${name} (sebep: ${reason || '-'}) (guild=${interaction.guildId})`);
             return;
         }

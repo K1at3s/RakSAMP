@@ -24,7 +24,7 @@ struct stGTAMenu
 	char szTitle[MAX_MENU_LINE];
 	char szSeparator[MAX_MENU_LINE]; // ???
 	BYTE byteColCount;
-	char szColumnContent[MAX_COLUMNS][MAX_MENU_LINE];
+	char szColumnContent[MAX_MENU_ITEMS][MAX_MENU_LINE];
 };
 
 #define IDB_BUTTON1			10

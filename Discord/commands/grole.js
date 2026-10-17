@@ -1,6 +1,8 @@
 const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
+const { submit: submitTrackedCommand } = require('../utils/commandTracker');
+const { isOnline, replyOffline } = require('../utils/clientPresence');
 const { setPendingInteraction } = require('../utils/pendingReplies');
 
 module.exports = {
@@ -24,6 +26,7 @@ module.exports = {
             return interaction.reply({ content: '❌ Bu komutu kullanmaya yetkin yok.', ephemeral: true });
         }
         const hwid = guild.linkedHwids[0];
+        if (!isOnline(hwid)) return replyOffline(interaction, guild);
         const name = interaction.options.getString('name');
         const role = interaction.options.getString('role');
 
@@ -31,8 +34,8 @@ module.exports = {
         if (name && role) {
             const roleMap = { mem: 'Member', co: 'Co-Leader' };
             const fullRole = roleMap[role] || role;
-            queueCommand(hwid, { type: 'grole', target: name, role: fullRole, requesterId: interaction.id });
-            await interaction.reply({ content: `✅ \`/grole ${name} → ${fullRole}\` kuyruga alindi — sayfali listede araniyor...`, ephemeral: true });
+            await submitTrackedCommand(interaction, guild, hwid, { type: 'grole', target: name, role: fullRole });
+
             console.log(`👤 [GROLE] Direkt: ${name} -> ${fullRole} (guild=${interaction.guildId})`);
             return;
         }
