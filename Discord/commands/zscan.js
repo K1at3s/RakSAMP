@@ -1,3 +1,5 @@
+const { language } = require('../utils/i18n');
+const { interactionTranslator } = require('../utils/i18n');
 const { SlashCommandBuilder } = require('discord.js');
 const db = require('../db');
 const Guild = require('../models').Guild;
@@ -20,16 +22,17 @@ module.exports = {
             .setDescriptionLocalizations({ tr: 'on = başlat, off = durdur, sn = tek seferlik tam doğrulama', 'en-US': 'on = start, off = stop, sn = one-shot full verify' })
             .setRequired(false)
             .addChoices(
-                { name: 'on (başlat)', value: 'on' },
-                { name: 'off (durdur)', value: 'off' },
-                { name: 'sn (tam doğrulama)', value: 'sn' }
+                { name: "on (start)", name_localizations: {"tr": "on (başlat)"}, value: 'on' },
+                { name: "off (stop)", name_localizations: {"tr": "off (durdur)"}, value: 'off' },
+                { name: "sn (full verification)", name_localizations: {"tr": "sn (tam doğrulama)"}, value: 'sn' }
             )),
     async execute(interaction) {
+        const T = await interactionTranslator(interaction);
         const guild = await Guild.findOne({ guildId: interaction.guildId });
         if (!hasGroupPermission(interaction, guild)) {
-            return interaction.reply({ content: '❌ Bu komutu kullanmaya yetkin yok.', ephemeral: true });
+            return interaction.reply({ content: T("❌ Bu komutu kullanmaya yetkin yok.", "❌ You do not have permission to use this command."), ephemeral: true });
         }
-        const isTr = guild ? guild.lang === 'tr' : true;
+        const isTr = language(guild, interaction) === 'tr';
         const mode = interaction.options.getString('mode');
 
         if (!mode) {
@@ -54,7 +57,7 @@ module.exports = {
         const hwid = getLinkedHwid(guild);
         if (hwid && !isOnline(hwid)) return replyOffline(interaction, guild);
         if (!hwid) {
-            return interaction.reply({ content: isTr ? '❌ Bağlı RakSAMP istemcisi yok.' : ' No linked RakSAMP client.', ephemeral: true });
+            return interaction.reply({ content: isTr ? T("❌ Bağlı RakSAMP istemcisi yok.", "❌ No linked RakSAMP client.") : ' No linked RakSAMP client.', ephemeral: true });
         }
 
         queueCommand(hwid, { type: 'command', cmd: `?zscan ${mode}`, author: interaction.user.username });

@@ -1,3 +1,4 @@
+const { language } = require('../utils/i18n');
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const db = require('../db');
 const Guild = require('../models').Guild;
@@ -13,7 +14,7 @@ module.exports = {
         .setDescriptionLocalizations({ tr: 'Bu grubun bot kaydını gösterir (grup adı, tarama anahtarları, son güncelleme)', 'en-US': 'Shows this group\'s bot record (group name, scan toggles, last update)' }),
     async execute(interaction) {
         const guild = await Guild.findOne({ guildId: interaction.guildId });
-        const isTr = guild ? guild.lang === 'tr' : true;
+        const isTr = language(guild, interaction) === 'tr';
         await interaction.deferReply({ ephemeral: true });
 
         const group = guild && guild.groupName ? String(guild.groupName).trim() : '';
@@ -42,7 +43,7 @@ module.exports = {
 
         const onOff = (v) => (v ? (isTr ? 'açık' : 'on') : (isTr ? 'kapalı' : 'off'));
         for (const r of rows) {
-            const ts = r.updated_at ? new Date(r.updated_at).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' }) : '-';
+            const ts = r.updated_at ? new Date(r.updated_at).toLocaleString(isTr ? 'tr-TR' : 'en-GB', { timeZone: 'Europe/Istanbul' }) : '-';
             embed.addFields({
                 name: r.name || '?',
                 value: [

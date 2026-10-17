@@ -231,8 +231,8 @@ async function writeRoster(spreadsheetId, group, rows, lang = 'en') {
     {
         const props = await sheets.spreadsheets.get({ spreadsheetId: id, fields: 'properties.title,sheets.properties(sheetId,title,gridProperties)' });
         const requests = [];
-        if ((props.data.properties.title || '') !== `${group} - Members List`) {
-            requests.push({ updateSpreadsheetProperties: { properties: { title: `${group} - Members List` }, fields: 'title' } });
+        if ((props.data.properties.title || '') !== `${group} - ${T('Üye Listesi', 'Members List')}`) {
+            requests.push({ updateSpreadsheetProperties: { properties: { title: `${group} - ${T('Üye Listesi', 'Members List')}` }, fields: 'title' } });
         }
         const first = props.data.sheets[0].properties;
         if (first.title !== 'Members' || first.gridProperties.rowCount !== 1000 || first.gridProperties.columnCount !== 26) {
@@ -256,12 +256,12 @@ async function writeRoster(spreadsheetId, group, rows, lang = 'en') {
     // (DST uygulamaz). Intl.DateTimeFormat timeZone'i, runtime'da timezone verisi yoksa
     // sessizce UTC'ye dusup saati 3 saat geriye yaziyordu (orn. 23:20 -> 20:20). Bunun
     // yerine sabit UTC+3 offset ile deterministik hesapla (sunucu saat diliminden bagimsiz).
-    const MONTHS_IST = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const MONTHS_IST = T(['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'], ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']);
     const nowIST = new Date(Date.now() + 3 * 3600 * 1000); // UTC+3 sabit offset
     const p2d = (n) => String(n).padStart(2, '0');
     const stamp = `${p2d(nowIST.getUTCDate())} ${MONTHS_IST[nowIST.getUTCMonth()]} ${nowIST.getUTCFullYear()}, ${p2d(nowIST.getUTCHours())}:${p2d(nowIST.getUTCMinutes())} UTC+3`;
 
-    const header = ['#', 'Name', 'Account ID', 'Rank', 'Role', 'VIP', 'Last Active'];
+    const header = ['#', T('İsim', 'Name'), T('Hesap ID', 'Account ID'), T('Rütbe', 'Rank'), T('Rol', 'Role'), 'VIP', T('Son Aktif', 'Last Active')];
     // For /gmembers updates: isme gore satir esle, bos gelen accountId/VIP'i tablodakiyle koru, listede olmayani sil
     let existingMap = new Map();
     let existingValues = [];
@@ -320,12 +320,14 @@ async function writeRoster(spreadsheetId, group, rows, lang = 'en') {
         }
         if (!changed) {
             console.log(`📊 Roster degisiklik yok, full rewrite atlandi (grup=${group}, ${finalRows.length} uye).`);
-            await sheets.spreadsheets.values.update({ spreadsheetId: id, range: 'A2', valueInputOption: 'USER_ENTERED', requestBody: { values: [[`${finalRows.length} members -- Updated ${stamp}`]] } });
+            await sheets.spreadsheets.values.update({ spreadsheetId: id, range: 'A2', valueInputOption: 'USER_ENTERED', requestBody: { values: [[T(`${finalRows.length} üye -- Güncellendi ${stamp}`, `${finalRows.length} members -- Updated ${stamp}`)]] } });
             await sheets.spreadsheets.values.update({ spreadsheetId: id, range: 'Summary!B3', valueInputOption: 'USER_ENTERED', requestBody: { values: [[stamp]] } });
+            await sheets.spreadsheets.values.update({ spreadsheetId: id, range: 'A1:G3', valueInputOption: 'USER_ENTERED', requestBody: { values: [[`${group} ${T('Üye Listesi', 'Roster')}`], [T(`${finalRows.length} üye -- Güncellendi ${stamp}`, `${finalRows.length} members -- Updated ${stamp}`)], header] } });
+            await sheets.spreadsheets.values.update({ spreadsheetId: id, range: 'Summary!A1:B3', valueInputOption: 'USER_ENTERED', requestBody: { values: [[T('Toplam Üye', 'Total Members'), finalRows.length], ['VIP', vipCount], [T('Güncellendi', 'Updated'), stamp]] } });
             return { rows: finalRows.length, spreadsheetId: id, skipped: true, stamp, vipCount };
         }
     }
-    const values = [[`${group} Roster`], [`${finalRows.length} members -- Updated ${stamp}`], header];
+    const values = [[`${group} ${T('Üye Listesi', 'Roster')}`], [T(`${finalRows.length} üye -- Güncellendi ${stamp}`, `${finalRows.length} members -- Updated ${stamp}`)], header];
     finalRows.forEach((r, i) => {
         values.push([
             String(i + 1), r.name || '', r.accountId || '', r.rank || '', r.role || '',

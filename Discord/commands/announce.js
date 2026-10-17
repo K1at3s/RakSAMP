@@ -1,3 +1,4 @@
+const { interactionTranslator } = require('../utils/i18n');
 const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
@@ -21,25 +22,26 @@ module.exports = {
             .setRequired(true)
             .setMaxLength(120)),
     async execute(interaction) {
+        const T = await interactionTranslator(interaction);
         const guild = await Guild.findOne({ guildId: interaction.guildId });
         if (!hasGroupPermission(interaction, guild)) {
-            return interaction.reply({ content: '❌ Bu komutu kullanmaya yetkin yok.', ephemeral: true });
+            return interaction.reply({ content: T("❌ Bu komutu kullanmaya yetkin yok.", "❌ You do not have permission to use this command."), ephemeral: true });
         }
         const hwid = getLinkedHwid(guild);
         if (hwid && !isOnline(hwid)) return replyOffline(interaction, guild);
         if (!hwid) {
-            return interaction.reply({ content: '❌ Bu sunucu henüz bir RakSAMP istemcisine bağlı değil.', ephemeral: true });
+            return interaction.reply({ content: T("❌ Bu sunucu henüz bir RakSAMP istemcisine bağlı değil.", "❌ No RakSAMP client is linked to this server."), ephemeral: true });
         }
 
         const text = interaction.options.getString('mesaj').trim().slice(0, 120);
         if (!text) {
-            return interaction.reply({ content: '❌ Mesaj boş olamaz.', ephemeral: true });
+            return interaction.reply({ content: T("❌ Mesaj boş olamaz.", "❌ Message cannot be empty."), ephemeral: true });
         }
 
         queueCommand(hwid, { type: 'command', cmd: '!' + text, author: interaction.user.username });
 
         await interaction.reply({
-            content: `✅ Duyuru oyuna iletildi: **${text}**\n${guild.lang === 'tr' ? 'Grup chatinde görünecek (Discord köprü kanalına gitmez).' : 'It will appear in the group chat (not mirrored to the Discord bridge channel).'}`,
+            content: `${T('✅ Duyuru oyuna iletildi:', '✅ Announcement sent to the game:')} **${text}**\n${guild.lang === 'tr' ? 'Grup chatinde görünecek (Discord köprü kanalına gitmez).' : 'It will appear in the group chat (not mirrored to the Discord bridge channel).'}`,
             ephemeral: true
         });
         console.log(`📣 [ANNOUNCE] guild=${interaction.guildId} hwid=${hwid.slice(0, 8)}: ${text}`);

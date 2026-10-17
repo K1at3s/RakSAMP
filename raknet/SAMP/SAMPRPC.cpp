@@ -4,6 +4,7 @@
 
 #include "main.h"
 #include "Security.h"
+#include "GameMessages.h"
 #include <iostream>
 
 // netrpc.cpp'de tanimli: otomatik tag harvest zinciri ?al???yor mu
@@ -445,11 +446,11 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
             sprintf_s(szPing, sizeof(szPing), "%d", iPing);
             if (iPing < 0) strcpy(szPing, "--");
             if (dFps < 0.0) strcpy(szFps, "--");
-            sprintf_s(szResult, sizeof(szResult), "!%s's PL: %g%% | FPS: %s | Ping: %s ms",
+            sprintf_s(szResult, sizeof(szResult), PlayerStatsMessage(g_langTurkish),
                 pPlName, dLoss, szFps, szPing);
         }
         else {
-            sprintf_s(szResult, sizeof(szResult), "!Packetloss bulunamadi.");
+            sprintf_s(szResult, sizeof(szResult), (g_langTurkish ? "!Paket kaybi bulunamadi." : "!Packetloss not found."));
         }
 
         std::cout << "[pnetstats yakalandi] " << szResult << "\n";
@@ -603,9 +604,9 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
         if(nZones > 0) {
             char szResult[256];
             if(nPlayers >= 0)
-                sprintf_s(szResult, "!Zone: %d | Aktif: %d", nZones, nPlayers);
+                sprintf_s(szResult, (g_langTurkish ? "!Bolge: %d | Aktif: %d" : "!Zone: %d | Active: %d"), nZones, nPlayers);
             else
-                sprintf_s(szResult, "!Zone: %d", nZones);
+                sprintf_s(szResult, (g_langTurkish ? "!Bolge: %d" : "!Zone: %d"), nZones);
             Log("[GST] Sonuc: %s", szResult);
             sendChat(szResult);
         } else {
@@ -785,7 +786,8 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                 char b2low[128]={0}; for(int i=0; sampDialog.szButton2[i] && i<120; i++) b2low[i]=(sampDialog.szButton2[i]>='A'&&sampDialog.szButton2[i]<='Z')?sampDialog.szButton2[i]+32:sampDialog.szButton2[i];
                 bool bHasNext = (strstr(sampDialog.szButton2, ">>") || strstr(b2low, "next") || strstr(b2low, "ileri") || strstr(sampDialog.szButton2, "\xBB") || strstr(sampDialog.szButton2, "\xAB"));
                 bool bIsLast = (strstr(b2low, "cancel") || strstr(b2low, "iptal") || strstr(b2low, "kapat") || strstr(b2low, "close"));
-                if(r != 1 && bHasNext && !bIsLast){ r = 1; iBtn = 0; iItem = 0; Log("[GHP] Buton fallback: sonraki sayfa (Button2='%s')", sampDialog.szButton2); }
+                if(bIsLast) r = 0;
+                else if(r != 1 && bHasNext && !IsGmembersPermissionSearchComplete()){ r = 1; iBtn = 0; iItem = 0; Log("[GHP] Buton fallback: sonraki sayfa (Button2='%s')", sampDialog.szButton2); }
             }
             Log("[GHP] /gmembers sayfa yakalandi (style %d, baslik: %s) -> %s",
                 sampDialog.bDialogStyle, szTitle, (r == 1) ? "sonraki sayfa" : "finaliz");
@@ -1191,7 +1193,7 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                 }
                 FinishDiscordGroupCommand("grole", "failed", "member_not_found");
                 Log("[GROLE] Hedef '%s' bulunamadi, iptal.", g_groleTarget.c_str());
-                char szNFG[96]; sprintf_s(szNFG, sizeof(szNFG), "!Uye bulunamadi: %.60s", g_groleTarget.c_str());
+                char szNFG[96]; sprintf_s(szNFG, sizeof(szNFG), (g_langTurkish ? "!Uye bulunamadi: %.60s" : "!Member not found: %.60s"), g_groleTarget.c_str());
                 g_bridgeSuppressEcho++;
                 sendChat(szNFG);
                 g_grAnnounce[0] = 0;
@@ -1354,7 +1356,7 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                 }
                 FinishDiscordGroupCommand("grank", "failed", "member_not_found");
                 Log("[GRANK] Hedef '%s' bulunamadi, iptal.", g_grankTarget.c_str());
-                char szNFK[96]; sprintf_s(szNFK, sizeof(szNFK), "!Uye bulunamadi: %.60s", g_grankTarget.c_str());
+                char szNFK[96]; sprintf_s(szNFK, sizeof(szNFK), (g_langTurkish ? "!Uye bulunamadi: %.60s" : "!Member not found: %.60s"), g_grankTarget.c_str());
                 g_bridgeSuppressEcho++;
                 sendChat(szNFK);
                 g_grAnnounce[0] = 0;

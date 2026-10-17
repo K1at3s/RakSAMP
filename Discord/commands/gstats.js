@@ -1,3 +1,4 @@
+const { interactionTranslator } = require('../utils/i18n');
 const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
@@ -8,15 +9,16 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('gstats')
         .setNameLocalizations({ tr: 'gistatistik', 'en-US': 'gstats' })
-        .setDescription('Bagli RakSAMP istemcisinden grup istatistikleri ister')
+        .setDescription('Requests group stats from the linked RakSAMP client')
         .setDescriptionLocalizations({ tr: 'Bağlı RakSAMP istemcisinden grup istatistikleri ister', 'en-US': 'Requests group stats from the linked RakSAMP client' })
-        .addStringOption(o => o.setName('group_id').setDescription('Belirli bir grubun ID si (bos birakilirsa kendi grubun)').setRequired(false)),
+        .addStringOption(o => o.setName('group_id').setDescription("Group ID (leave blank for your own group)").setDescriptionLocalizations({"tr": "Grup ID’si (boş bırakırsan kendi grubun)", "en-US": "Group ID (leave blank for your own group)"}).setRequired(false)),
     async execute(interaction) {
+        const T = await interactionTranslator(interaction);
         const guild = await Guild.findOne({ guildId: interaction.guildId });
 
         if (!guild || !guild.linkedHwids || guild.linkedHwids.length === 0) {
             return interaction.reply({
-                content: '❌ Bu sunucu henuz bir RakSAMP istemcisine bagli degil. Once `/link <hwid>` kullanin.',
+                content: T("❌ Bu sunucu henuz bir RakSAMP istemcisine bagli degil. Once `/link <hwid>` kullanin.", "❌ No RakSAMP client is linked to this server. Use `/link <hwid>` first."),
                 ephemeral: true
             });
         }

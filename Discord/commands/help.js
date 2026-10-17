@@ -1,3 +1,4 @@
+const { language } = require('../utils/i18n');
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const Guild = require('../models').Guild;
 
@@ -10,32 +11,32 @@ function buildEmbed(isTr) {
         .setColor(0x00AEFF)
         .addFields(
             field(isTr ? '👥 Grup Yonetimi' : '👥 Group Management', [
-                '`/grole [name] [role]` — ' + (isTr ? 'uye rol degistir (Member/Co-Leader)' : 'change a member role (Member/Co-Leader)'),
-                '`/grank [name] [rank]` — ' + (isTr ? 'uye rank degistir (bos = menuden sec)' : 'change a member rank (blank = pick from menu)'),
-                '`/gkick [name] [reason]` — ' + (isTr ? 'uye kickle (bos = menuden sec)' : 'kick a member (blank = pick from menu)'),
+                '`/grole [name] [role]` — ' + (isTr ? 'üye rolünü değiştir (Üye/Yardımcı Lider)' : 'change a member role (Member/Co-Leader)'),
+                '`/grank [name] [rank]` — ' + (isTr ? 'üye rütbesini değiştir (boş = menüden seç)' : 'change a member rank (blank = pick from menu)'),
+                '`/gkick [name] [reason]` — ' + (isTr ? 'üyeyi gruptan at (boş = menüden seç)' : 'kick a member (blank = pick from menu)'),
                 '`/ginv <id>` — ' + (isTr ? 'oyuncu davet et (/ginvite)' : 'invite a player (/ginvite)'),
-                '`/gmembers` — ' + (isTr ? 'uye listesi + VIP harvest → Google Sheets roster' : 'member list + VIP harvest → Google Sheets roster')
+                '`/gmembers` — ' + (isTr ? 'üye listesi + VIP bilgileri → Google Sheets üye tablosu' : 'member list + VIP harvest → Google Sheets roster')
             ]),
             field(isTr ? '📊 Bilgi / Sorgu' : '📊 Info / Lookup', [
                 '`/stats [id]` — ' + (isTr ? 'grup/oyuncu istatistigi (bos = kendi)' : 'group/player stats (blank = own)'),
                 '`/astats <account_id>` — ' + (isTr ? 'hesap istatistigi' : 'account stats'),
                 '`/gstats [group_id]` — ' + (isTr ? 'grup istatistigi (gstats kanalina da duser)' : 'group stats (also posted to the gstats channel)'),
-                '`/admins` — ' + (isTr ? 'online admin listesi' : 'online admin list'),
-                '`/oyuncu <isim|id>` — ' + (isTr ? 'oyuncu cache (packetloss/FPS/ping)' : 'player cache (packetloss/FPS/ping)'),
-                '`/bolge <grup|tag>` — ' + (isTr ? 'grubun tag + sahip oldugu zone listesi' : 'group tag + owned zones'),
-                '`/botdurum` — ' + (isTr ? 'bot kaydi: grup adi + zscan/gzt/zgrp durumu' : 'bot record: group name + zscan/gzt/zgrp state'),
+                '`/admins` — ' + (isTr ? 'çevrimiçi yönetici listesi' : 'online admin list'),
+                (isTr ? '`/oyuncu <isim|id>` — ' : '`/player <player>` — ') + (isTr ? 'kayıtlı oyuncu bilgileri (paket kaybı/FPS/gecikme)' : 'player cache (packetloss/FPS/ping)'),
+                (isTr ? '`/bolge <grup|tag>` — ' : '`/zone <group>` — ') + (isTr ? 'grubun tag + sahip oldugu zone listesi' : 'group tag + owned zones'),
+                (isTr ? '`/botdurum` — ' : '`/botstatus` — ') + (isTr ? 'bot kaydi: grup adi + zscan/gzt/zgrp durumu' : 'bot record: group name + zscan/gzt/zgrp state'),
                 '`/alog <oyuncu|id>` — ' + (isTr ? 'admin ceza gecmisi (ban/mute/kick)' : 'admin punishment history'),
                 '`/glog <oyuncu|id>` — ' + (isTr ? 'grup rol/rank degisiklik gecmisi' : 'group role/rank change history')
             ]),            field(isTr ? '✉️ Mesaj & Cagri' : '✉️ Message & Call', [
                 '`/send <komut>` — ' + (isTr ? 'oyun icine serbest komut/mesaj' : 'free-form command/message to the game'),
                 '`/pm <oyuncu> <mesaj>` — ' + (isTr ? 'oyuncuya ozel mesaj (yanit burada doner)' : 'private message to a player (reply shows here)'),
-                '`/duyuru <mesaj>` — ' + (isTr ? 'grup chatine duyuru at (oyun ici)' : 'broadcast to the group chat (in-game)'),
+                (isTr ? '`/duyuru <mesaj>` — ' : '`/announce <message>` — ') + (isTr ? 'grup chatine duyuru at (oyun ici)' : 'broadcast to the group chat (in-game)'),
                 '`/backup [grup] [mesaj]` — ' + (isTr ? 'acil destek cagrisi (@here)' : 'urgent backup call (@here)'),
-                '`/zonewar ...` — ' + (isTr ? 'manuel ZONE WAR bildirimi' : 'manual ZONE WAR notification')
+                '`/zonewar ...` — ' + (isTr ? 'elle bölge savaşı bildirimi' : 'manual ZONE WAR notification')
             ]),
             field(isTr ? '⚙️ Ayarlar' : '⚙️ Settings', [
-                '`/dil <tr|en>` — ' + (isTr ? 'bot dili (duyurular + embedler)' : 'bot language (announcements + embeds)'),
-                '`/kopru [on|off]` — ' + (isTr ? 'Discord grup chat koprusu (bos = durumu goster)' : 'Discord group-chat bridge (blank = show state)'),
+                (isTr ? '`/dil <tr|en>` — ' : '`/lang <tr|en>` — ') + (isTr ? 'bot dili (duyurular + embedler)' : 'bot language (announcements + embeds)'),
+                (isTr ? '`/kopru [on|off]` — ' : '`/bridge [on|off]` — ') + (isTr ? 'Discord grup chat koprusu (bos = durumu goster)' : 'Discord group-chat bridge (blank = show state)'),
                 '`/zscan [on|off|sn]` — ' + (isTr ? 'otomatik zone tarama (sn = tek seferlik tam dogrulama)' : 'automatic zone scan (sn = one-shot full verify)'),
                 '`/gzt [on|off|time]` — ' + (isTr ? 'savas geri sayim duyurulari' : 'war countdown announcements'),
                 '`/gname` — ' + (isTr ? 'grup adini yeniden ogren' : 're-learn the group name'),
@@ -46,8 +47,8 @@ function buildEmbed(isTr) {
             ]),
             field(isTr ? '🎮 Oyun Ici (grup chat)' : '\uD83C\uDFAE In-Game (group chat)', [
                 '`?help` — ' + (isTr ? 'oyun ici komut listesi' : 'in-game command list'),
-                '`?w` — ' + (isTr ? 'war help (Discord @here, 3 dk cooldown)' : 'war help (Discord @here, 3 min cooldown)'),
-                '`?ping` `?pl [id]` `?gst` `?az` — ' + (isTr ? 'ping / packetloss / zone / bos zone' : 'ping / packetloss / zone / free zone'),
+                '`?w` — ' + (isTr ? 'savaş desteği (Discord @here, 3 dk bekleme)' : 'war help (Discord @here, 3 min cooldown)'),
+                '`?ping` `?pl [id]` `?gst` `?az` — ' + (isTr ? 'gecikme / paket kaybı / bölge / boş bölge' : 'ping / packetloss / zone / free zone'),
                 '`?zscan` `?gzt` `?zgo` `?zf` `?zsnip` `?za` — ' + (isTr ? 'tarama ve zone savasi' : 'scan and zone war'),
                 '`?greet` `?welcomemsg` `?gm` `?discordchat` `?guildid` — ' + (isTr ? 'ayarlar' : 'settings'),
                 '`!<mesaj>` — ' + (isTr ? 'grup chatinden Discord kanalina mesaj' : 'message from the group chat to Discord')
@@ -71,7 +72,7 @@ module.exports = {
             .setRequired(false)),
     async execute(interaction) {
         const guild = await Guild.findOne({ guildId: interaction.guildId });
-        const isTr = guild ? guild.lang === 'tr' : true;
+        const isTr = language(guild, interaction) === 'tr';
         const embed = buildEmbed(isTr);
         const share = interaction.options.getBoolean('share') || false;
 

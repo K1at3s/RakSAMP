@@ -8,6 +8,11 @@
 #include "GroupMembership.h"
 #include "MuteNotice.h"
 #include "KillListFormat.h"
+#include "WarResultContext.h"
+#include "GameMessages.h"
+#include "GroupLeadership.h"
+static WarResultContext s_warResultContext;
+static DWORD s_lastWarScoreCellAt = 0;
 
 #include <cmath>   // json.hpp'nin std::isfinite gereksinimi
 #include <math.h>
@@ -1337,6 +1342,8 @@ static void SendGroupLog(const char *actor, long long actorAcc,
 	g_lastGlogActorAcc = actorAcc;
 	g_lastGlogTargetAcc = targetAcc;
 	g_lastGlogType = type;
+	g_pushPending = false;
+	g_pushUntil = 0;
 	try
 	{
 		httplib::Client cli(g_szBackendBase);
@@ -1451,6 +1458,11 @@ void StartPm(const char *target, const char *message, const char *discordUser, c
 // ?post: son yakalanan grup aksiyonunu (rol/rank/kick) gerekceyle Discord'a embed gonder.
 static void PushLastGroupLog(const char *reason)
 {
+	// Inline ?post completes the reason window; its timeout must not post again.
+	g_pushPending = false;
+	g_pushUntil = 0;
+	g_pushReason[0] = 0;
+	g_pushRequester = -1;
 	if(!g_isEngineActive || g_sessionToken.empty()) return;
 	if(!g_lastGlogTarget[0]) return;
 	try
@@ -1541,7 +1553,7 @@ static void InterruptDiscordGroupCommand(const char *requesterId) {
 }
 bool BeginDiscordGroupCommand(const char *type, const char *requesterId, const char *target, const char *value) {
     if(s_discordGroupCommand.active() || g_groleActive || g_grankActive || g_gkickActive ||
-       g_groleListActive || g_grankListActive || g_gkickListActive || g_grRoleDblPending) {
+       g_groleListActive || g_grankListActive || g_gkickListActive || g_grRoleDblPending || g_waitingForGmembers) {
         SendDiscordCommandStatus(requesterId, "failed", "busy");
         return false;
     }
@@ -2400,7 +2412,7 @@ static void SyncBotStatusToDb()
 	{
 		httplib::Client cli(g_szBackendBase);
 		cli.set_connection_timeout(3);
-		json body = {{"name", g_szNickName}, {"data", data}};
+		json body = {{"name", g_szNickName}, {"hwid", g_myHWID}, {"data", data}};
 		// groupName YALNIZCA doluyken g?nder: bos g?nderilirse DB deki kayitli
 		// grup adi her acilista silinir, bot yeniden ??renmek zorunda kalir.
 		if(!g_myGroupName.empty())
@@ -2442,6 +2454,37 @@ void LearnOwnGroupName(const char *szName)
 		g_zscanDbLoaded = false; // grup degisti: yeni grubun zscan/gzt/zgrp tercihi okunsun
 	SyncBotStatusToDb(); // groupName'i DB'ye yaz (zscan/gzt/zgrp dogru kaydedilsin)
 }
+struct UnlinkPermissionRequest {
+    bool active = false, found = false, allowed = false;
+    int slot = -1;
+    DWORD started = 0;
+    std::string name, group;
+};
+static UnlinkPermissionRequest s_unlinkPermission;
+bool IsGmembersPermissionSearchComplete() {
+    return s_iGmPage >= GM_MAX_PAGES ||
+        (s_unlinkPermission.active ? s_unlinkPermission.found : (s_bGmBotOk && s_bGmUserOk));
+}
+static void FinishUnlinkPermission() {
+    const UnlinkPermissionRequest request = s_unlinkPermission;
+    s_unlinkPermission = UnlinkPermissionRequest();
+    g_waitingForGmembers = false;
+    const char *current = request.slot >= 0 && request.slot < MAX_PLAYERS ? playerInfo[request.slot].szPlayerName : "";
+    if(!current[0] && request.slot >= 0 && request.slot < MAX_PLAYERS) current = g_playerCache[request.slot].szName;
+    const bool sameUser = current[0] && PendingGroupCommand::equal(current, request.name) && PendingGroupCommand::equal(request.group, g_myGroupName);
+    Log("[UNLINK-AUTH] user=%s slot=%d found=%d allowed=%d sameUser=%d", request.name.c_str(), request.slot, request.found, request.allowed, sameUser);
+    if(sameUser && request.found && request.allowed) {
+        RequestDiscordUnlink(false);
+        g_bridgeSuppressEcho++;
+        sendChat((char *)(g_langTurkish ? "!Discord unlink istendi." : "!Discord unlink requested."));
+    } else {
+        g_bridgeSuppressEcho++;
+        if(sameUser && request.found)
+            sendChat((char *)(g_langTurkish ? "!Yetkin yok: Leader veya Co-Leader gerekli." : "!No permission: Leader or Co-Leader required."));
+        else sendChat((char *)(g_langTurkish ? "!Yetki dogrulanamadi; uye listesi alinamadi veya oyuncu degisti. Tekrar dene." : "!Could not verify permissions; retry the command."));
+    }
+}
+
 // ?grole/?grank kullanim yetkisi: lider kadro + Oreyoo.
 static bool IsGroupLeader(const char *szName)
 {
@@ -2960,12 +3003,12 @@ static void SendFlashSlice(const FlashZoneItem items[], int iFrom, int iTo, int 
 	char szOut[140]; int nOut = 0;
 	// Tarama/kill-list capture suruyorsa "capturing" belirt (kullanici: "capture ediyorsa
 	// capturing yazsin"). g_zoneScanIdx >= 0 = zone taramasi aktif; g_zwCapturingKillList = kill list.
-	const char *pCap = (g_zoneScanIdx >= 0 || g_zwCapturingKillList) ? " (capturing)" : "";
+	const char *pCap = (g_zoneScanIdx >= 0 || g_zwCapturingKillList) ? LM(" (toplaniyor)", " (capturing)") : "";
 	// YS botu gibi: parca sayisi 1 ise [1/1] GOSTERMEZ (duz baslik), birden fazlaysa [iNum/iOf].
 	if(iOf > 1)
-		nOut += sprintf_s(szOut + nOut, sizeof(szOut) - nOut, "![%d/%d] Flashing Zones%s: ", iNum, iOf, pCap);
+		nOut += sprintf_s(szOut + nOut, sizeof(szOut) - nOut, LM("![%d/%d] Yanip sonen bolgeler%s: ", "![%d/%d] Flashing Zones%s: "), iNum, iOf, pCap);
 	else
-		nOut += sprintf_s(szOut + nOut, sizeof(szOut) - nOut, "!Flashing Zones%s: ", pCap);
+		nOut += sprintf_s(szOut + nOut, sizeof(szOut) - nOut, LM("!Yanip sonen bolgeler%s: ", "!Flashing Zones%s: "), pCap);
 	bool bFirst = true;
 	for(int i = iFrom; i < iTo; i++)
 	{
@@ -3607,6 +3650,11 @@ static void SendGrRoleSecondClick()
 
 void ProcessZoneScan()
 {
+    if(s_unlinkPermission.active) {
+        if(GetTickCount() - s_unlinkPermission.started > 30000) FinishUnlinkPermission();
+        else return; // pause scan/harvest commands while the permission dialog is open
+    }
+
     if(s_discordGroupCommand.expired(GetTickCount())) {
         const std::string type = s_discordGroupCommand.type;
         FinishDiscordGroupCommand(type.c_str(), "timeout", "game_timeout");
@@ -4195,6 +4243,7 @@ void ClientMessage(RPCParameters *rpcParams)
 	// ve "GROUP: (...) changed the rank of ..." buradan yakalanir.
 	CheckAdminLogMessage(szNonColorEmbeddedMsg);
 	CheckGroupLogMessage(szNonColorEmbeddedMsg);
+    s_warResultContext.observe(szNonColorEmbeddedMsg);
     if(IsOwnGroupExit(szNonColorEmbeddedMsg, g_szNickName)) {
         s_groupLeavePending = false;
         if(s_discordGroupCommand.active()) {
@@ -4369,6 +4418,7 @@ void ClientMessage(RPCParameters *rpcParams)
 				while(*pZ >= '0' && *pZ <= '9' && nZ < 15) szZ[nZ++] = *pZ++;
 				szZ[nZ] = 0;
 				if(szZ[0]) strncpy_s(g_zwWarZone, sizeof(g_zwWarZone), szZ, sizeof(g_zwWarZone) - 1);
+                if(s_warResultContext.active()) s_warResultContext.zone = g_zwWarZone;
 				Log("[ZONEWAR] Aktif sava? zone #%s duyurusu alindi.", g_zwWarZone);
 			}
 		}
@@ -4407,6 +4457,11 @@ void ClientMessage(RPCParameters *rpcParams)
 			}
 			else
 			{
+				if(g_zwCapturingKillList && g_zwKillTdCount > 0 && !g_zwKillListSent)
+				{
+					Log("[KILLLIST] Yeni savas basladi, onceki savasin kill listi finalize ediliyor...");
+					FinalizeKillList();
+				}
 				pAction = "join";
 				strncpy_s(g_zwWarZone, sizeof(g_zwWarZone), szZoneTag, sizeof(g_zwWarZone) - 1);
 				// Savas baslangic anini kaydet: kalan sure = ZONE_WAR_TOTAL_MS - gecen sure.
@@ -4424,11 +4479,6 @@ void ClientMessage(RPCParameters *rpcParams)
 				// Yeni savas: onceki yakalayici/kill list durumunu sifirla
 				// ONCE bekleyen kill list varsa (onceki savas sonucu) finalize et —
 				// yoksa yeni savasin reset'i veriyi siler, sonuc Discord'a hic gitmez.
-				if(g_zwCapturingKillList && g_zwKillTdCount > 0 && !g_zwKillListSent)
-				{
-					Log("[KILLLIST] Yeni savas basladi, onceki savasin kill listi finalize ediliyor...");
-					FinalizeKillList();
-				}
 				g_zwCapturingKillList = false;
 				g_zwKillListSent = false;
 				g_zwKillListText.clear(); g_zwKillTdCount = 0;
@@ -4507,6 +4557,9 @@ void ClientMessage(RPCParameters *rpcParams)
 						}
 					}
 				}
+                s_lastWarScoreCellAt = 0;
+                s_warResultContext.begin(g_myGroupName, g_zwWarTeamLeft, g_zwWarTeamRight, g_zwWarZone,
+                    g_myHWID + ":" + std::to_string((long long)time(NULL)) + ":" + std::to_string(GetTickCount()));
 				// Grubumuzun adini henuz bilmiyorsak ogrenme moduna gir.
 				// Sonraki ilk "ZONE WAR: X keeps/takes..." mesajindaki X bizim grubumuzdur.
 				if(g_myGroupName.empty() && !g_zwLearningGroup)
@@ -4697,7 +4750,7 @@ if(g_zwCapturingKillList && !g_zwKillListSent)
 							g_zwWeWon = false;
 							Log("[ZONEWAR] Grubumuz savasi KAYBETTI (%s).", pZoneMsg);
 							g_bridgeSuppressEcho++;
-							sendChat((char *)LM("!Your group lost the zone war!", "!Your group lost the zone war!"));
+							sendChat((char *)LM("!Grubunuz bolge savasini kaybetti!", "!Your group lost the zone war!"));
 						}
 					}
 				}
@@ -4774,9 +4827,9 @@ if(g_zwCapturingKillList && !g_zwKillListSent)
 						if(!strPick.empty()) strEnemy = strPick;
 					}
 					if(strEnemy.empty())
-						sprintf_s(szGreet, sizeof(szGreet), LM("!Welcome %s! Grup savasindayiz! Yedek icin /gz2 yaz!", "!Welcome %s! We are in a ZONE WAR! Type /gz2 for backup!"), szName);
+						sprintf_s(szGreet, sizeof(szGreet), LM("!Hos geldin %s! Grup savasindayiz! Destek icin /gz2 yaz!", "!Welcome %s! We are in a ZONE WAR! Type /gz2 for backup!"), szName);
 					else
-						sprintf_s(szGreet, sizeof(szGreet), "!Welcome %s! We are in a ZONE WAR against %s! Type /gz2 for backup!", szName, strEnemy.c_str());
+						sprintf_s(szGreet, sizeof(szGreet), LM("!Hos geldin %s! %s grubuyla bolge savasindayiz! Destek icin /gz2 yaz!", "!Welcome %s! We are in a ZONE WAR against %s! Type /gz2 for backup!"), szName, strEnemy.c_str());
 				}
 				else
 				{
@@ -5034,7 +5087,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 						&& GetTickCount() - g_pnetstatsReqTime <= 15000)
 					{
 						g_waitingForPNetStats = false;
-						const char *pName = "Player ?";
+						const char *pName = LM("Oyuncu ?", "Player ?");
 						char szFallbackName[32];
 						if(playerInfo[iPid].szPlayerName[0]) pName = playerInfo[iPid].szPlayerName;
 						else if(g_playerCache[iPid].szName[0]) pName = g_playerCache[iPid].szName;
@@ -5048,7 +5101,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 						if(g_playerCache[iPid].iFps >= 0) sprintf_s(szFps, sizeof(szFps), "%d", g_playerCache[iPid].iFps); else strcpy(szFps, "--");
 						if(g_playerCache[iPid].iPing >= 0) sprintf_s(szPing, sizeof(szPing), "%d", g_playerCache[iPid].iPing); else strcpy(szPing, "--");
 						char szOut[192];
-						sprintf_s(szOut, sizeof(szOut), "!%s's PL: %g%% | FPS: %s | Ping: %s ms",
+						sprintf_s(szOut, sizeof(szOut), PlayerStatsMessage(g_langTurkish),
 							pName, g_playerCache[iPid].dLoss, szFps, szPing);
 						Log("[PNETSTATS] Stats-post ile cevap: %s", szOut);
 						g_bridgeSuppressEcho++;
@@ -5113,7 +5166,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				{
 					int iLeft = (int)((180000 - (dwNow - g_lastWarHelpTime)) / 1000);
 					char szCd[128];
-					sprintf_s(szCd, sizeof(szCd), LM("!Cooldown: %d sn kaldi (?w)", "!Cooldown: %d secs left (?w)"), iLeft);
+					sprintf_s(szCd, sizeof(szCd), LM("!Bekleme: %d sn kaldi (?w)", "!Cooldown: %d secs left (?w)"), iLeft);
 					Log("[WARHELP] Cooldown aktif (%d sn kaldi), ?w yoksayildi.", iLeft);
 					g_bridgeSuppressEcho++;
 					sendChat(szCd);
@@ -5135,7 +5188,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				{
 					int iLeft = (int)((30000 - (dwNow - g_lastPingTime)) / 1000);
 					char szCd[128];
-					sprintf_s(szCd, sizeof(szCd), LM("!Cooldown: %d sn kaldi (?ping)", "!Cooldown: %d secs left (?ping)"), iLeft);
+					sprintf_s(szCd, sizeof(szCd), LM("!Bekleme: %d sn kaldi (?ping)", "!Cooldown: %d secs left (?ping)"), iLeft);
 					Log("[PING] Cooldown aktif (%d sn kaldi), ?ping yoksayildi.", iLeft);
 					g_bridgeSuppressEcho++;
 					sendChat(szCd);
@@ -5154,7 +5207,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				{
 					int iLeft = (int)((30000 - (dwNow - g_lastPLTime)) / 1000);
 					char szCd[128];
-					sprintf_s(szCd, sizeof(szCd), LM("!Cooldown: %d sn kaldi (?pl)", "!Cooldown: %d secs left (?pl)"), iLeft);
+					sprintf_s(szCd, sizeof(szCd), LM("!Bekleme: %d sn kaldi (?pl)", "!Cooldown: %d secs left (?pl)"), iLeft);
 					Log("[PNETSTATS] Cooldown aktif (%d sn kaldi), ?pl yoksayildi.", iLeft);
 					g_bridgeSuppressEcho++;
 					sendChat(szCd);
@@ -5207,7 +5260,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				{
 					int iLeft = (int)((30000 - (dwNow - g_lastGStatsTime)) / 1000);
 					char szCd[128];
-					sprintf_s(szCd, sizeof(szCd), LM("!Cooldown: %d sn kaldi (?gst)", "!Cooldown: %d secs left (?gst)"), iLeft);
+					sprintf_s(szCd, sizeof(szCd), LM("!Bekleme: %d sn kaldi (?gst)", "!Cooldown: %d secs left (?gst)"), iLeft);
 					Log("[GST] Cooldown aktif (%d sn kaldi), ?gst yoksayildi.", iLeft);
 					g_bridgeSuppressEcho++;
 					sendChat(szCd);
@@ -5229,7 +5282,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					if(g_zoneOwnerName[zid][0] == 0 || !_stricmp(g_zoneOwnerName[zid], "Free"))
 						nFree++;
 				char szOut[96];
-				sprintf_s(szOut, sizeof(szOut), "!Attackable zones: %d", nFree);
+				sprintf_s(szOut, sizeof(szOut), LM("!Saldirilabilir bolgeler: %d", "!Attackable zones: %d"), nFree);
 				Log("[AZ] Attackable zones: %d.", nFree);
 				g_bridgeSuppressEcho++;
 				sendChat(szOut);
@@ -5243,7 +5296,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				{
 					int iLeft = (int)((30000 - (dwNow - g_lastGStatsTime)) / 1000);
 					char szCd[128];
-					sprintf_s(szCd, sizeof(szCd), LM("!Cooldown: %d sn kaldi (?gstats)", "!Cooldown: %d secs left (?gstats)"), iLeft);
+					sprintf_s(szCd, sizeof(szCd), LM("!Bekleme: %d sn kaldi (?gstats)", "!Cooldown: %d secs left (?gstats)"), iLeft);
 					Log("[GSTATS] Cooldown aktif (%d sn kaldi), ?gstats yoksayildi.", iLeft);
 					g_bridgeSuppressEcho++;
 					sendChat(szCd);
@@ -5295,9 +5348,9 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 							auto j=json::parse(res->body);
 							auto list=j.value("list", json::array());
 							if(list.empty()){
-								g_bridgeSuppressEcho++; sendChat((char*)"!Per-user welcome yok.");
+								g_bridgeSuppressEcho++; sendChat((char*)LM("!Kisiye ozel karsilama mesaji yok.", "!No per-user welcome message."));
 							} else {
-								std::string out="!Per-user: ";
+								std::string out=LM("!Kisiye ozel: ", "!Per-user: ");
 								for(auto &e: list){
 									std::string t=e.value("target_name",""), m=e.value("custom_message","");
 									out += t + "->" + m.substr(0,20) + " | ";
@@ -5326,11 +5379,11 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					} else if(!_stricmp(pArg, "clear")){
 						Log("[WELCOME] Per-user %s siliniyor", senderName);
 						SetWelcomePerUser(senderName, "");
-						g_bridgeSuppressEcho++; char tmp[128]; sprintf_s(tmp,"!Per-user %s silindi.", senderName); sendChat(tmp);
+						g_bridgeSuppressEcho++; char tmp[128]; sprintf_s(tmp,LM("!%s icin ozel karsilama silindi.", "!Per-user welcome removed for %s."), senderName); sendChat(tmp);
 					} else {
 						Log("[WELCOME] Per-user %s (self) -> %s", senderName, pArg);
 						SetWelcomePerUser(senderName, pArg);
-						g_bridgeSuppressEcho++; char tmp[128]; sprintf_s(tmp,"!Per-user %s ayarlandi.", senderName); sendChat(tmp);
+						g_bridgeSuppressEcho++; char tmp[128]; sprintf_s(tmp,LM("!%s icin ozel karsilama ayarlandi.", "!Per-user welcome set for %s."), senderName); sendChat(tmp);
 					}
 				}
 			}
@@ -5364,7 +5417,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					SyncBotStatusToDb(); // gruba gore DB'ye kaydet
 					Log("[GZT] Timer ON.");
 					g_bridgeSuppressEcho++;
-					sendChat((char *)LM("!War timer: ACIK. Son 10/5/3/1 saniyede duyuru yapilacak.", "!War timer: ON. Announcements at last 10/5/3/1 secs."));
+					sendChat((char *)LM("!Savas sayaci: ACIK. Son 10/5/3/1 saniyede duyuru yapilacak.", "!War timer: ON. Announcements at last 10/5/3/1 secs."));
 					return;
 				}
 				if(!_stricmp(pArg, "off"))
@@ -5373,7 +5426,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					SyncBotStatusToDb(); // gruba gore DB'ye kaydet
 					Log("[GZT] Timer OFF.");
 					g_bridgeSuppressEcho++;
-					sendChat((char *)LM("!War timer: KAPALI. Duyuru yapilmayacak.", "!War timer: OFF. No announcements."));
+					sendChat((char *)LM("!Savas sayaci: KAPALI. Duyuru yapilmayacak.", "!War timer: OFF. No announcements."));
 					return;
 				}
 
@@ -5393,7 +5446,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				{
 					Log("[GZT] Argumansiz ama timer KAPALI, 'kapali' uyarisi gonderildi.");
 					g_bridgeSuppressEcho++;
-					sendChat((char *)LM("!War timer: KAPALI. Acmak icin ?gzt on | sure: ?gzt time",
+					sendChat((char *)LM("!Savas sayaci: KAPALI. Acmak icin ?gzt on | sure: ?gzt time",
 						"!War timer: OFF. Enable with ?gzt on | time: ?gzt time"));
 					return;
 				}
@@ -5406,7 +5459,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				{
 					Log("[GZT] Savas aktif degil, War time bilgisi gonderilemiyor.");
 					g_bridgeSuppressEcho++;
-					sendChat((char *)LM("!War time: yok", "!War time: none"));
+					sendChat((char *)LM("!Savas suresi: yok", "!War time: none"));
 					return;
 				}
 				if(g_warTimerTick != 0 && dwNow - g_warTimerTick < ZONE_WAR_TOTAL_MS)
@@ -5419,7 +5472,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					int iMin = iRemainingSec / 60;
 					int iSec = iRemainingSec % 60;
 					char szWarTime[192];
-					sprintf_s(szWarTime, sizeof(szWarTime), "!War time: %d:%02d", iMin, iSec);
+					sprintf_s(szWarTime, sizeof(szWarTime), LM("!Savas suresi: %d:%02d", "!War time: %d:%02d"), iMin, iSec);
 					Log("[GZT] Kalan sure hesaplandi: %d:%02d", iMin, iSec);
 					g_bridgeSuppressEcho++;
 					sendChat(szWarTime);
@@ -5429,7 +5482,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					// Savas baslangici bilinmiyor ya da coktan bitti.
 					Log("[GZT] Savas baslangici yok, War time bilgisi gonderilemiyor.");
 					g_bridgeSuppressEcho++;
-					sendChat((char *)LM("!War time: yok", "!War time: none"));
+					sendChat((char *)LM("!Savas suresi: yok", "!War time: none"));
 				}
 			}
 			// --- ?tr / ?en : grup dili (varsayilan INGILIZCE; ?tr ile Turkce'ye gec) ---
@@ -5454,14 +5507,38 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
             // ?unlink only removes Discord linking; it does not leave the game group.
             else if(!_stricmp(pGroupMsg, "?unlink"))
             {
-                if(iSenderId >= 0 && iSenderId != g_myPlayerID && !IsGroupLeader(pCmdSenderName)) {
+                if(iSenderId < 0 || iSenderId == g_myPlayerID) {
+                    RequestDiscordUnlink(false);
                     g_bridgeSuppressEcho++;
-                    sendChat((char *)LM("!Yetkin yok.", "!No permission."));
+                    sendChat((char *)LM("!Discord unlink istendi.", "!Discord unlink requested."));
                     return;
                 }
-                RequestDiscordUnlink(false);
+                const char *sender = iSenderId < MAX_PLAYERS ? playerInfo[iSenderId].szPlayerName : "";
+                if(!sender[0] && iSenderId < MAX_PLAYERS) sender = g_playerCache[iSenderId].szName;
+                if(!sender[0]) {
+                    g_bridgeSuppressEcho++;
+                    sendChat((char *)LM("!Oyuncu adi dogrulanamadi. Tekrar dene.", "!Could not identify the player. Try again."));
+                    return;
+                }
+                if(!_stricmp(sender, "Oreyoo")) { RequestDiscordUnlink(false); return; }
+                if(s_unlinkPermission.active || g_waitingForGmembers || g_snipPermPending || g_gmPhase != 0 || g_ghpActive ||
+                   g_groleActive || g_grankActive || g_gkickActive || g_groleListActive || g_grankListActive || g_gkickListActive) {
+                    g_bridgeSuppressEcho++;
+                    sendChat((char *)LM("!Baska islem suruyor; biraz sonra ?unlink dene.", "!Another action is running; retry ?unlink shortly."));
+                    return;
+                }
+                s_unlinkPermission = UnlinkPermissionRequest();
+                s_unlinkPermission.active = true;
+                s_unlinkPermission.name = sender;
+                s_unlinkPermission.group = g_myGroupName;
+                s_unlinkPermission.slot = iSenderId;
+                s_unlinkPermission.started = GetTickCount();
+                GmembersReset();
+                g_waitingForGmembers = true;
+                g_gmembersReqTime = GetTickCount();
                 g_bridgeSuppressEcho++;
-                sendChat((char *)LM("!Discord unlink istendi; baglanti kaldiriliyor.", "!Discord unlink requested."));
+                sendChat((char *)LM("!Unlink yetkisi guncel uye listesinden kontrol ediliyor...", "!Checking unlink permissions against the current member list..."));
+                sendServerCommand((char *)"/gmembers");
             }
 			// --- ?guildid <id> : bu botu kullanan Discord sunucusunu (guild) bagla ---
 			else if(!strncmp(pGroupMsg, "?guildid", 8) && (pGroupMsg[8] == ' ' || pGroupMsg[8] == '\0'))
@@ -5657,7 +5734,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 								Log("[TAG] '%s' -> '[%s]' yerel + DB'ye kaydedildi.", szName, szTag);
 								g_bridgeSuppressEcho++;
 								char szOk[96];
-								sprintf_s(szOk, sizeof(szOk), "!%s -> [%s] kaydedildi.", szName, szTag);
+								sprintf_s(szOk, sizeof(szOk), LM("!%s -> [%s] kaydedildi.", "!%s -> [%s] saved."), szName, szTag);
 								sendChat(szOk);
 							}
 						}
@@ -5862,7 +5939,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				{
 					int iLeft = (int)((180000 - (dwNow - g_lastZoneWarTime)) / 1000);
 					char szCd[128];
-					sprintf_s(szCd, sizeof(szCd), LM("!Cooldown: %d sn kaldi (?za)", "!Cooldown: %d secs left (?za)"), iLeft);
+					sprintf_s(szCd, sizeof(szCd), LM("!Bekleme: %d sn kaldi (?za)", "!Cooldown: %d secs left (?za)"), iLeft);
 					Log("[ZONEWAR] Cooldown aktif (%d sn kaldi), ?za yoksayildi.", iLeft);
 					g_bridgeSuppressEcho++;
 					sendChat(szCd);
@@ -6150,7 +6227,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 							}
 							Log("[GHP] ?zgrp on: harvest hemen ba?latiliyor (/groups).");
 							g_bridgeSuppressEcho++;
-							sendChat((char *)LM("!Grup listesi ??reniliyor...", "!Learning group list..."));
+							sendChat((char *)LM("!Grup listesi ogreniliyor...", "!Learning group list..."));
 							g_ghpLearnedCount = 0;
 							SyncGroupColorsToDb();
 							g_waitingForGroups = true;
@@ -6208,7 +6285,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				{
 					int iLeft = (int)((180000 - (dwNow - g_lastZoneWarTime)) / 1000);
 					char szCd[128];
-					sprintf_s(szCd, sizeof(szCd), LM("!Cooldown: %d sn kaldi (?gz)", "!Cooldown: %d secs left (?gz)"), iLeft);
+					sprintf_s(szCd, sizeof(szCd), LM("!Bekleme: %d sn kaldi (?gz)", "!Cooldown: %d secs left (?gz)"), iLeft);
 					Log("[ZONEWAR] Cooldown aktif (%d sn kaldi), ?gz yoksayildi.", iLeft);
 					g_bridgeSuppressEcho++;
 					sendChat(szCd);
@@ -7087,6 +7164,7 @@ void ScrGameText(RPCParameters *rpcParams)
 	// guvenilir ek sinyal. Sonuc zsnip zincirine islenir + war durumu temizlenir.
 	if(strstr(szMessage, "won the zone war"))
 	{
+        s_warResultContext.outcome(true);
 		g_zwWeWon = true;
 		g_ztkOutcome = 1;
 		if(g_ztkActive) g_ztkTargetWar = false;
@@ -7124,6 +7202,7 @@ void ScrGameText(RPCParameters *rpcParams)
 	}
 	else if(strstr(szMessage, "lost the zone war"))
 	{
+        s_warResultContext.outcome(false);
 		g_zwWeWon = false;
 		g_ztkOutcome = 2;
 		if(g_ztkActive) g_ztkTargetWar = false;
@@ -7580,6 +7659,9 @@ void ScrShowTextDraw(RPCParameters *rpcParams)
 				}
 				strClean += cText[i];
 			}
+            if(TextDrawTransmit.fX >= 220.0f && TextDrawTransmit.fX <= 500.0f &&
+               TextDrawTransmit.fY >= 90.0f && TextDrawTransmit.fY <= 400.0f && IsKillListNumber(strClean.c_str()))
+                s_lastWarScoreCellAt = GetTickCount();
 			// ~n~ -> satir sonu (tek textdraw'da cok satirli olabilir)
 			std::string strLine;
 			for(int i = 0; i < cTextLen; i++)
@@ -7621,7 +7703,11 @@ void ScrShowTextDraw(RPCParameters *rpcParams)
 			for(int k = 0; k < g_zwKillTdCount; k++)
 			{
 				if(g_zwKillTds[k].fX == TextDrawTransmit.fX && g_zwKillTds[k].fY == TextDrawTransmit.fY
-					&& strcmp(g_zwKillTds[k].szText, strLine.c_str()) == 0) { bDup = true; break; }
+					) {
+                    strncpy_s(g_zwKillTds[k].szText, sizeof(g_zwKillTds[k].szText), strLine.c_str(), _TRUNCATE);
+                    g_zwKillTds[k].dwColor = TextDrawTransmit.dwLetterColor;
+                    bDup = true; break;
+                }
 			}
 			if(!bDup && g_zwKillTdCount < KILL_TD_MAX)
 			{
@@ -7768,6 +7854,22 @@ static void WaitForKillListRows()
 
 void FinalizeKillList()
 {
+    if(s_warResultContext.active() && !s_warResultContext.wonKnown && g_inZoneWar) {
+        // Periodic capture-window expiry is not a war result.
+        g_zwCaptureStart = GetTickCount();
+        g_zwFinalizeAt = 0;
+        return;
+    }
+    if(!s_warResultContext.active() || !s_warResultContext.wonKnown) {
+        Log("[KILLLIST] No confirmed war identity/outcome; waiting instead of guessing WIN.");
+        WaitForKillListRows();
+        return;
+    }
+    if(s_lastWarScoreCellAt == 0 || GetTickCount() - s_lastWarScoreCellAt > 15000) {
+        Log("[KILLLIST] No fresh scoreboard near war end; refusing stale initial 0-0 rows.");
+        WaitForKillListRows();
+        return;
+    }
 	if(g_zwKillTdCount == 0) { WaitForKillListRows(); return; }
 
 	// X'e gore sirala (kolon sirasi: ayni Y icinde soldan saga)
@@ -7785,42 +7887,19 @@ void FinalizeKillList()
 	// Y'ye gore satir gruplama: satirlar 15 birim arayla (Y=95,110,125...); tolerans
 	// 5 - eski 20, komsu satirlari birbirine karistiriyordu ("Name hakixld 0 0 0 ...").
 	// Her satir: rank(X=135, ATILIR), Name(X=160), K(X=280), A(X=340), D(X=400), DMG(X=460).
+    g_zwMineK = g_zwMineA = g_zwMineD = g_zwMineDmg = 0;
+    g_zwEnemyK = g_zwEnemyA = g_zwEnemyD = g_zwEnemyDmg = 0;
 	std::string strMine, strEnemy, strUnknown;
 	char szHeader[64] = "";
 
 	// g_zwMyColor bilinmiyorsa: en cok gecen satir rengini kendi takimi varsay
 	// (kill list'te kendi takimimizin satirlari cogunluktadir). UIF'te mavi FF0000FF.
-	if(g_zwMyColor == 0)
-	{
-		unsigned int aColCnt[64] = {0};
-		DWORD aCols[64] = {0};
-		for(int a = 0; a < g_zwKillTdCount; a++)
-		{
-			DWORD c = g_zwKillTds[a].dwColor & 0xFFFFFF;
-			if(c == 0xFFFFFF || c == 0) continue; // beyaz baslik/renksiz
-			int k = 0;
-			for(; k < 64; k++)
-			{
-				if(aCols[k] == c) { aColCnt[k]++; break; }
-				if(aCols[k] == 0) { aCols[k] = c; aColCnt[k] = 1; break; }
-			}
-		}
-		int iBest = -1;
-		for(int k = 0; k < 64; k++)
-		{
-			if(aCols[k] != 0 && (iBest < 0 || aColCnt[k] > aColCnt[iBest]))
-				iBest = k;
-		}
-		if(iBest >= 0)
-		{
-			g_zwMyColor = aCols[iBest];
-			Log("[KILLLIST] Takim rengi cogunluktan varsayildi: 0x%06X", g_zwMyColor);
-		}
-	}
+    if(g_zwMyColor == 0) g_zwMyColor = s_warResultContext.ownBlue() ? 0x0000FF : 0xFF0000;
 
+	bool usedCells[KILL_TD_MAX] = {false};
 	for(int a = 0; a < g_zwKillTdCount; a++)
 	{
-		if(!g_zwKillTds[a].szText[0]) continue;
+		if(usedCells[a] || !g_zwKillTds[a].szText[0]) continue;
 		float fRowY = g_zwKillTds[a].fY;
 		// Ayni Y bandindaki textdraw'lari topla: (X, renk, metin) ikilileri.
 		struct Cell { float fX; DWORD dwColor; char szText[64]; } cells[16];
@@ -7828,12 +7907,12 @@ void FinalizeKillList()
 		for(int b = a; b < g_zwKillTdCount && nCells < 16; b++)
 		{
 			if(fabsf(g_zwKillTds[b].fY - fRowY) > 5.0f) continue; // ayni satir (15 birim arayla)
-			if(!g_zwKillTds[b].szText[0]) continue;
+			if(usedCells[b] || !g_zwKillTds[b].szText[0]) continue;
 			cells[nCells].fX = g_zwKillTds[b].fX;
 			cells[nCells].dwColor = g_zwKillTds[b].dwColor & 0xFFFFFF;
 			strncpy_s(cells[nCells].szText, sizeof(cells[0].szText), g_zwKillTds[b].szText, sizeof(cells[0].szText) - 1);
 			nCells++;
-			g_zwKillTds[b].szText[0] = 0; // kullanildi, tekrar satir olusmasin
+			usedCells[b] = true;
 		}
 		if(nCells == 0) continue;
 
@@ -7887,7 +7966,7 @@ void FinalizeKillList()
 			else if(fX < 430.0f) strncpy_s(szD, sizeof(szD), cells[c].szText, _TRUNCATE);
 			else strncpy_s(szDmg, sizeof(szDmg), cells[c].szText, _TRUNCATE);
 		}
-		if(!szName[0] && !szK[0]) continue; // bos satir
+		if(!IsKillListPlayerRow(szName, szK, szA, szD, szDmg)) continue; // bos satir
 
 		// E1 gibi hizali satir: "%-16s %4s %4s %4s %6s"
 		char szRow[96];
@@ -7930,34 +8009,9 @@ void FinalizeKillList()
 
 	// Takim yonumuz: "vs" duyurusundaki konum (sol=kirmizi, sag=mavi) en guvenilir;
 	// bilinmiyorsa renk fallback'i (mavi 0x0000FF). bWeAreBlue=true ise biz sag grup.
-	bool bWeAreBlue = g_zwWeAreBlueKnown ? g_zwWeAreBlue : ((g_zwMyColor & 0xFFFFFF) == 0x0000FF);
-	// Takim adlari: once "vs" duyurusu (sol=kirmizi, sag=mavi). Duyuru yoksa isimleri
-	// bWeAreBlue ile TUTARLI sec: biz kirmiziysak kirmizi=biz, maviysek mavi=biz.
-	const char *pRedName  = !g_zwWarTeamLeft.empty()  ? g_zwWarTeamLeft.c_str()
-		: (bWeAreBlue ? (!g_enemyGroupName.empty() ? g_enemyGroupName.c_str() : "Kirmizi")
-		              : (!g_myGroupName.empty()    ? g_myGroupName.c_str()    : "Kirmizi"));
-	const char *pBlueName = !g_zwWarTeamRight.empty() ? g_zwWarTeamRight.c_str()
-		: (bWeAreBlue ? (!g_myGroupName.empty()    ? g_myGroupName.c_str()    : "Mavi")
-		              : (!g_enemyGroupName.empty() ? g_enemyGroupName.c_str() : "Mavi"));
-	// Yedek: savas zonunun hafizadaki sahibi (duyuru kacmissa "Kirmizi"/"Mavi" kalirdi).
-	{
-		int wz = g_zwWarZone[0] ? atoi(g_zwWarZone) : -1;
-		const char *pOwn = (wz >= 0 && wz < MAX_GANG_ZONES) ? g_zoneOwnerName[wz] : NULL;
-		const char *pMe = g_myGroupName.empty() ? NULL : g_myGroupName.c_str();
-		if(pOwn && pOwn[0] && _stricmp(pOwn, "Free") != 0)
-		{
-			if(pMe && !_stricmp(pOwn, pMe))
-			{
-				if(bWeAreBlue && !strcmp(pBlueName, "Mavi")) pBlueName = pOwn;
-				if(!bWeAreBlue && !strcmp(pRedName, "Kirmizi")) pRedName = pOwn;
-			}
-			else
-			{
-				if(bWeAreBlue && !strcmp(pRedName, "Kirmizi")) pRedName = pOwn;
-				if(!bWeAreBlue && !strcmp(pBlueName, "Mavi")) pBlueName = pOwn;
-			}
-		}
-	}
+    const bool bWeAreBlue = s_warResultContext.ownBlue();
+    const char *pRedName = s_warResultContext.red.c_str();
+    const char *pBlueName = s_warResultContext.blue.c_str();
 	const char *pMineName  = bWeAreBlue ? pBlueName : pRedName;
 	const char *pEnemyName = bWeAreBlue ? pRedName  : pBlueName;
 
@@ -7984,8 +8038,8 @@ void FinalizeKillList()
 		strRedRows = strEnemy; iRedK = g_zwEnemyK; iRedA = g_zwEnemyA; iRedD = g_zwEnemyD; iRedDmg = g_zwEnemyDmg;
 		strBlueRows = strMine; iBlueK = g_zwMineK; iBlueA = g_zwMineA; iBlueD = g_zwMineD; iBlueDmg = g_zwMineDmg;
 	}
-    strRedBox = BuildKillListBox(strRedRows, iRedK, iRedA, iRedD, iRedDmg);
-    strBlueBox = BuildKillListBox(strBlueRows, iBlueK, iBlueA, iBlueD, iBlueDmg);
+    strRedBox = BuildKillListBox(strRedRows, iRedK, iRedA, iRedD, iRedDmg, g_langTurkish);
+    strBlueBox = BuildKillListBox(strBlueRows, iBlueK, iBlueA, iBlueD, iBlueDmg, g_langTurkish);
 	// E1 gibi eski tek-metin ciktisi da korunur (dosya / debug)
 	std::string strOut;
 	if(!szHeader[0]) sprintf_s(szHeader, sizeof(szHeader), "%-16s %4s %4s %4s %6s", "Name", "K", "A", "D", "DMG");
@@ -8092,7 +8146,7 @@ void FinalizeKillList()
 	}
 
 	SendKillList(strRedBox.c_str(), strBlueBox.c_str(), pRedName, pBlueName, pRedTag, pBlueTag,
-		iRedK, iBlueK, g_zwWeWon, g_zwMvpName, g_zwFeederName, g_zwBestDmg, g_zwBestK, g_zwBestD, g_zwFirstBlood, szTopWeapons);
+		iRedK, iBlueK, s_warResultContext.won, g_zwMvpName, g_zwFeederName, g_zwBestDmg, g_zwBestK, g_zwBestD, g_zwFirstBlood, szTopWeapons, s_warResultContext.ownGroup.c_str(), s_warResultContext.zone.c_str(), s_warResultContext.id.c_str(), s_warResultContext.wonKnown);
 
 	g_zwCapturingKillList = false;
 	g_zwKillListSent = true;
@@ -8251,16 +8305,16 @@ void ProcessZoneWarAutoJoin()
 		g_waitingForPNetStats = false;
 		if(g_plTargetId >= 0 && g_plTargetId < MAX_PLAYERS && (g_playerCache[g_plTargetId].dLoss >= 0.0 || PlEnsureFromDb(g_plTargetId)))
 		{
-			const char *pName = "Player ?";
+			const char *pName = LM("Oyuncu ?", "Player ?");
 			char szFallbackName[32];
 			if(playerInfo[g_plTargetId].szPlayerName[0]) pName = playerInfo[g_plTargetId].szPlayerName;
 			else if(g_playerCache[g_plTargetId].szName[0]) pName = g_playerCache[g_plTargetId].szName;
-			else { sprintf_s(szFallbackName, sizeof(szFallbackName), "Player %d", g_plTargetId); pName = szFallbackName; }
+			else { sprintf_s(szFallbackName, sizeof(szFallbackName), LM("Oyuncu %d", "Player %d"), g_plTargetId); pName = szFallbackName; }
 			char szFps[16], szPing[16];
 			if(g_playerCache[g_plTargetId].iFps >= 0) sprintf_s(szFps, sizeof(szFps), "%d", g_playerCache[g_plTargetId].iFps); else strcpy(szFps, "--");
 			if(g_playerCache[g_plTargetId].iPing >= 0) sprintf_s(szPing, sizeof(szPing), "%d", g_playerCache[g_plTargetId].iPing); else strcpy(szPing, "--");
 			char szOut[192];
-			sprintf_s(szOut, sizeof(szOut), "!%s's PL: %g%% | FPS: %s | Ping: %s ms",
+			sprintf_s(szOut, sizeof(szOut), PlayerStatsMessage(g_langTurkish),
 				pName, g_playerCache[g_plTargetId].dLoss, szFps, szPing);
 			Log("[PNETSTATS] Zaman asimi, cache/DB ile cevap: %s", szOut);
 			g_bridgeSuppressEcho++;
@@ -8270,7 +8324,7 @@ void ProcessZoneWarAutoJoin()
 		{
 			Log("[PNETSTATS] Stats-post ve cache yok, 'bulunamadi' cevabi.");
 			g_bridgeSuppressEcho++;
-			sendChat((char *)LM("!Packetloss bulunamadi.", "!Packetloss not found."));
+			sendChat((char *)LM("!Paket kaybi bulunamadi.", "!Packetloss not found."));
 		}
 	}
 
@@ -8372,6 +8426,15 @@ void ProcessZoneWarAutoJoin()
 #define GMCOL_RESULT_NEXT 1
 int OnGmembersPage(const char *szInfo, int *outButton, int *outItem)
 {
+    if(s_unlinkPermission.active) {
+        const MemberLeadership result = FindMemberLeadership(szInfo, s_unlinkPermission.name);
+        if(result != MEMBER_NOT_FOUND) {
+            s_unlinkPermission.found = true;
+            s_unlinkPermission.allowed = result == MEMBER_ALLOWED;
+            return GMCOL_RESULT_DONE;
+        }
+    }
+
 	// Ham icerigi logla (format dogrulamasi)
 	Log("[GMEMBERS-DATA] Sayfa %d/%d: %.400s", s_iGmPage, GM_MAX_PAGES, szInfo ? szInfo : "");
 
@@ -8426,6 +8489,7 @@ int OnGmembersPage(const char *szInfo, int *outButton, int *outItem)
 // Arama bitti (bulundu / limit / bos): yetki sonucunu uygula.
 void OnGmembersFinalize()
 {
+    if(s_unlinkPermission.active) { FinishUnlinkPermission(); return; }
 	g_waitingForGmembers = false;
 	if(!g_snipPermPending) return;
 	g_snipPermPending = false;
@@ -8455,7 +8519,7 @@ void OnGmembersFinalize()
 			Log("[ZSNIP] Yetki reddi: ?yes ile yine de saldirilir, ?no ile tarama devam eder.");
 			g_bridgeSuppressEcho++;
 			sendChat((char *)LM("!Yetki yok - saldiri icin ?yes, taramaya donmek icin ?no.",
-				"?No permission - ?yes to attack anyway, ?no to resume zone scan."));
+				"!No permission - ?yes to attack anyway, ?no to resume zone scan."));
 			return;
 		}
 		g_bridgeSuppressEcho++;

@@ -87,7 +87,7 @@ void FinishDiscordGroupCommand(const char *type, const char *status, const char 
 void SendKillList(const char *redBox, const char *blueBox, const char *redName, const char *blueName,
     const char *redTag, const char *blueTag, int redKills, int blueKills, bool won,
     const char *mvpName, const char *feederName, int mvpDmg, int mvpKills, int feederDeaths,
-    const char *firstBlood, const char *topWeapons);
+    const char *firstBlood, const char *topWeapons, const char *ownGroup, const char *zone, const char *warId, bool wonKnown);
 void ProcessZoneWarAutoJoin();
 void ProcessGmembers();
 void StartGmembersCollect(const char *requestId = "");
@@ -101,6 +101,7 @@ extern int  g_groupNamePhase;
 extern unsigned long g_groupNameReqTime;
 int  OnGmembersPage(const char *szInfo, int *outButton, int *outItem); // 0=done, 1=next
 void OnGmembersFinalize();
+bool IsGmembersPermissionSearchComplete();
 void GmembersReset();
 void ProcessGhpHarvestStep();
 bool OnGStatsResultForHarvest(const char *szInfo);

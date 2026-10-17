@@ -14,6 +14,8 @@ const { markOnline, isOnline, shouldWarn } = require('./utils/clientPresence');
 const commandTracker = require('./utils/commandTracker');
 const { loadCommands, registerCommands, registerForGuild, handleInteraction } = require('./handlers/commandHandler');
 const db = require('./db');
+const { validateKillListContext, createResultDeduplicator } = require('./utils/killListContext');
+const killListResults = createResultDeduplicator();
 
 // Dil yardimcisi: botun oyun ici diline gore metin sec (tr -> Turkce, diger -> EN).
 const L = (guild, tr, en) => (guild && guild.lang === 'tr') ? tr : en;
@@ -83,8 +85,8 @@ client.on('interactionCreate', async (interaction) => {
             .setCustomId(`grole_role_select:${requesterId}:${encodeURIComponent(selectedMember)}`)
             .setPlaceholder(L(gG, 'Rol seç...', 'Select role...'))
             .addOptions([
-                { label: 'Member', value: 'Member' },
-                { label: 'Co-Leader', value: 'Co-Leader' },
+                { label: L(gG, 'Üye', 'Member'), value: 'Member' },
+                { label: L(gG, 'Yardımcı Lider', 'Co-Leader'), value: 'Co-Leader' },
             ]);
         const row = new ActionRowBuilder().addComponents(roleSelect);
         const embed = new EmbedBuilder()
@@ -151,8 +153,8 @@ client.on('interactionCreate', async (interaction) => {
             .setCustomId(`grank_rank_select:${requesterId}:${encodeURIComponent(selectedMember)}`)
             .setPlaceholder(L(gG, 'Rank seç...', 'Select rank...'))
             .addOptions([
-                { label: 'Member', value: 'Member' },
-                { label: 'Co-Leader', value: 'Co-Leader' },
+                { label: L(gG, 'Üye', 'Member'), value: 'Member' },
+                { label: L(gG, 'Yardımcı Lider', 'Co-Leader'), value: 'Co-Leader' },
                 { label: 'Leader', value: 'Leader' },
                 { label: 'Elder', value: 'Elder' },
                 { label: 'Veteran', value: 'Veteran' },
@@ -236,24 +238,25 @@ client.on('interactionCreate', async (interaction) => {
     }
     // Lisans Onaylama Butonları (yalnızca sahip; başkası basarsa uyar)
     if (interaction.isButton() && (interaction.customId.startsWith('approve_') || interaction.customId.startsWith('reject_'))) {
+        const licenseGuild = await Guild.findOne({ guildId: interaction.guildId });
         if (interaction.user.id !== OWNER_ID || interaction.guildId !== OWNER_GUILD_ID) {
-            return interaction.reply({ content: 'Bu butonları yalnızca sunucu sahibi kullanabilir.', ephemeral: true });
+            return interaction.reply({ content: L(licenseGuild, 'Bu butonları yalnızca sunucu sahibi kullanabilir.', 'Only the server owner can use these buttons.'), ephemeral: true });
         }
         const hwid = interaction.customId.replace(/^(approve|reject)_/, '');
 
         if (interaction.customId.startsWith('approve_')) {
             await License.findOneAndUpdate({ hwid }, { isApproved: true }, { upsert: true });
             const embed = new EmbedBuilder()
-                .setTitle("✅ HWID Lisansı Onaylandı")
-                .setDescription(`**HWID:** \`${hwid}\` cihazına erişim izni verildi.`)
+                .setTitle(L(licenseGuild, '✅ HWID Lisansı Onaylandı', '✅ HWID License Approved'))
+                .setDescription(L(licenseGuild, `**HWID:** \`${hwid}\` cihazına erişim izni verildi.`, `Access granted to device **HWID:** \`${hwid}\`.`))
                 .setColor(0x00FF00)
                 .setTimestamp();
             await interaction.update({ embeds: [embed], components: [] });
         } else {
             await License.findOneAndUpdate({ hwid }, { isApproved: false }, {});
             const embed = new EmbedBuilder()
-                .setTitle("❌ HWID Lisansı Reddedildi")
-                .setDescription(`**HWID:** \`${hwid}\` cihazına erişim izni verilmedi.`)
+                .setTitle(L(licenseGuild, '❌ HWID Lisansı Reddedildi', '❌ HWID License Rejected'))
+                .setDescription(L(licenseGuild, `**HWID:** \`${hwid}\` cihazına erişim izni verilmedi.`, `Access denied to device **HWID:** \`${hwid}\`.`))
                 .setColor(0xFF0000)
                 .setTimestamp();
             await interaction.update({ embeds: [embed], components: [] });
@@ -302,11 +305,11 @@ async function resolveGuildForRakSAMP(body) {
 
 // HWID lisans bildirimi — sahibin sabit log kanalına butonlu embed atar (otomatik).
 // Kategori: "<grup ismi> - Logs/Logları" (bot diline gore) sahip sunucusunda olusturulur
-// ve sabit log kanali o kategorinin icine tasinir. (Metin Turkce sabit; lokalizasyon yok.)
+// ve sabit log kanali o kategorinin icine tasinir. (Metinler sahip sunucusunun dilini kullanir.)
 async function notifyUnapprovedDevice(hwid) {
     try {
         // Grup adi + dil: once hwid'e bagli guild, yoksa sahip guild kaydindan.
-        const guildRec = (await guildUtils.getGuildByHwid(hwid)) || (await guildUtils.getGuild(OWNER_GUILD_ID));
+        const guildRec = await guildUtils.getGuild(OWNER_GUILD_ID);
         const isTr = guildRec ? guildRec.lang === 'tr' : true;
         const groupName = guildRec && guildRec.groupName ? String(guildRec.groupName).trim() : '';
 
@@ -337,17 +340,17 @@ async function notifyUnapprovedDevice(hwid) {
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId(`approve_${hwid}`)
-                .setLabel('✅ Lisans Onayla')
+                .setLabel(L(guildRec, '✅ Lisans Onayla', '✅ Approve License'))
                 .setStyle(ButtonStyle.Success),
             new ButtonBuilder()
                 .setCustomId(`reject_${hwid}`)
-                .setLabel('❌ Reddet')
+                .setLabel(L(guildRec, '❌ Reddet', '❌ Reject'))
                 .setStyle(ButtonStyle.Danger)
         );
 
         const embed = new EmbedBuilder()
-            .setTitle("⚠️ Lisanssız Cihaz Girişi Belirlendi")
-            .setDescription(`Yetkisiz bir RakSAMP istemcisi bağlanmaya çalıştı.\n\n**HWID:** \`${hwid}\``)
+            .setTitle(L(guildRec, '⚠️ Lisanssız Cihaz Girişi Belirlendi', '⚠️ Unlicensed Device Detected'))
+            .setDescription(L(guildRec, `Yetkisiz bir RakSAMP istemcisi bağlanmaya çalıştı.\n\n**HWID:** \`${hwid}\``, `An unauthorized RakSAMP client tried to connect.\n\n**HWID:** \`${hwid}\``))
             .setColor(0xFF0000)
             .setTimestamp();
 
@@ -414,7 +417,7 @@ app.post('/api/gstats', async (req, res) => {
     const stripColor = (t) => String(t || '').replace(/\{[0-9a-fA-F]{6}\}/g, '').trim();
     const statsText = stripColor(body.statsText);
     const groupName = body.groupName || '';
-    const playerName = body.playerName || 'Bir oyuncu';
+    const playerName = body.playerName || L(guild, 'Bir oyuncu', 'A player');
     const requesterId = body.requesterId || null;
 
     if (!guild) {
@@ -431,7 +434,7 @@ app.post('/api/gstats', async (req, res) => {
         if (interaction) {
             try {
                 const embed = new EmbedBuilder()
-                    .setTitle("📊 Group Stats")
+                    .setTitle(L(guild, '📊 Grup İstatistikleri', '📊 Group Stats'))
                     .setDescription(statsText.slice(0, 3000))
                     .setColor(0x3498DB)
                     .setTimestamp();
@@ -451,7 +454,7 @@ app.post('/api/gstats', async (req, res) => {
             const channel = await client.channels.fetch(channelId);
             if (channel) {
                 const embed = new EmbedBuilder()
-                    .setTitle("📊 Group Stats")
+                    .setTitle(L(guild, '📊 Grup İstatistikleri', '📊 Group Stats'))
                     .setDescription(statsText.slice(0, 3000))
                     .setColor(0x3498DB)
                     .setTimestamp();
@@ -476,7 +479,7 @@ app.post('/api/admins', async (req, res) => {
     const guild = await resolveGuildForRakSAMP(body);
     const stripColor = (t) => String(t || '').replace(/\{[0-9a-fA-F]{6}\}/g, '').trim();
     const adminsText = stripColor(body.adminsText);
-    const playerName = body.playerName || 'Bir oyuncu';
+    const playerName = body.playerName || L(guild, 'Bir oyuncu', 'A player');
     const requesterId = body.requesterId || null;
 
     if (!guild) {
@@ -491,11 +494,11 @@ app.post('/api/admins', async (req, res) => {
         if (interaction) {
             try {
                 const embed = new EmbedBuilder()
-                    .setTitle("🛡️ Online Adminler")
+                    .setTitle(L(guild, '🛡️ Çevrimiçi Yöneticiler', '🛡️ Online Admins'))
                     .setDescription(adminsText.slice(0, 3000))
                     .setColor(0xE67E22)
                     .setTimestamp();
-                if (playerName) embed.setFooter({ text: `${playerName} tarafından istendi` });
+                if (playerName) embed.setFooter({ text: L(guild, `${playerName} tarafından istendi`, `Requested by ${playerName}`) });
                 await interaction.editReply({ embeds: [embed] });
                 removePendingInteraction(requesterId);
                 replied = true;
@@ -510,11 +513,11 @@ app.post('/api/admins', async (req, res) => {
             const channel = await client.channels.fetch(guild.logChannelId);
             if (channel) {
                 const embed = new EmbedBuilder()
-                    .setTitle("🛡️ Online Adminler")
+                    .setTitle(L(guild, '🛡️ Çevrimiçi Yöneticiler', '🛡️ Online Admins'))
                     .setDescription(adminsText.slice(0, 3000))
                     .setColor(0xE67E22)
                     .setTimestamp();
-                if (playerName) embed.setFooter({ text: `${playerName} tarafından istendi` });
+                if (playerName) embed.setFooter({ text: L(guild, `${playerName} tarafından istendi`, `Requested by ${playerName}`) });
                 await channel.send({ embeds: [embed] });
             }
         } catch (e) {
@@ -536,7 +539,7 @@ app.post('/api/warhelp', async (req, res) => {
     }
 
     const isTr = guild.lang === 'tr';
-    const playerName = body.playerName || 'Bir oyuncu';
+    const playerName = body.playerName || L(guild, 'Bir oyuncu', 'A player');
     const ownGroup = body.ownGroup || '';
     const enemyGroup = body.enemyGroup || '';
 
@@ -598,7 +601,7 @@ app.post('/api/gmembers/sheet', async (req, res) => {
             if (pending && pending.channelId) {
                 const userId = pending.user && pending.user.id ? pending.user.id : null;
                 const link = `https://docs.google.com/spreadsheets/d/${result.spreadsheetId}`;
-                const text = `📊 **${group} Roster**\n${link}\n${L(guild, 'Son güncelleme', 'Last updated')}: ${result.stamp}` + (userId ? `\n<@${userId}>` : '');
+                const text = `📊 **${group} ${L(guild, 'Üye Listesi', 'Roster')}**\n${link}\n${L(guild, 'Son güncelleme', 'Last updated')}: ${result.stamp}` + (userId ? `\n<@${userId}>` : '');
                 const channel = await client.channels.fetch(pending.channelId).catch(() => null);
                 if (channel && channel.send) {
                     let msgId = null;
@@ -652,12 +655,17 @@ app.get('/api/gmembers/known', async (req, res) => {
 
 app.post('/api/killlist', async (req, res) => {
     const body = req.body || {};
-    const guild = await resolveGuildForRakSAMP(body);
+    const guild = body.hwid ? await guildUtils.getGuildByHwid(body.hwid) : null;
 
     if (!guild) {
         return res.json({ success: false, message: "Bağlı Discord sunucusu bulunamadı." });
     }
-    const isTr = guild.lang === 'tr';
+    const mismatch = validateKillListContext(body, guild.groupName);
+    if (mismatch) {
+        console.error(`KILLLIST REJECTED: bot=${body.playerName || '?'} hwid=${body.hwid || '?'} reason=${mismatch}`);
+        return res.status(409).json({ success: false, message: mismatch });
+    }
+    const isTr = body.lang === 'tr' || (body.lang !== 'en' && guild.lang === 'tr');
 
     const won = Number(body.won) === 1;
     const redName = String(body.redName || 'Kırmızı').trim();
@@ -687,9 +695,9 @@ const mvpDmg = Number(body.mvpDmg) || 0;
     const t = {
         wonTitle: isTr ? '🏆 Grup Zone Savaşı Kazanıldı' : '🏆 Group Zone War Won',
         lostTitle: isTr ? '💀 Grup Zone Savaşı Kaybedildi' : '💀 Group Zone War Lost',
-        scoreKills: isTr ? 'Skor-Kills' : 'Score-Kills',
+        scoreKills: isTr ? 'Öldürme Skoru' : 'Kill Score',
         mvp: '⭐ MVP',
-        feeder: '🎯 Top Feeder',
+        feeder: isTr ? '🎯 En Çok Ölen' : '🎯 Top Feeder',
         firstBlood: isTr ? '🩸 İlk Kan' : '🩸 First Blood',
         topWeapons: isTr ? '🔫 En Çok Kullanılan Silahlar' : '🔫 Top Weapons',
     
@@ -700,8 +708,8 @@ const mvpDmg = Number(body.mvpDmg) || 0;
         { name: `⚔️ **${redTag || redName}**`, value: `\`\`\`\n${redBox}\n\`\`\`` },
         { name: `⚔️ **${blueTag || blueName}**`, value: `\`\`\`\n${blueBox}\n\`\`\`` }
     ];
-    if (mvp && mvp !== '?') fields.push({ name: t.mvp, value: `${mvp} (${mvpDmg} dmg, ${mvpKills} kills)`, inline: true });
-    if (feeder && feeder !== '?') fields.push({ name: t.feeder, value: `${feeder} (${feederDeaths} deaths)`, inline: true });
+    if (mvp && mvp !== '?') fields.push({ name: t.mvp, value: `${mvp} (${mvpDmg} ${isTr ? 'hasar' : 'dmg'}, ${mvpKills} ${isTr ? 'öldürme' : 'kills'})`, inline: true });
+    if (feeder && feeder !== '?') fields.push({ name: t.feeder, value: `${feeder} (${feederDeaths} ${isTr ? 'ölüm' : 'deaths'})`, inline: true });
     if (firstBlood) fields.push({ name: t.firstBlood, value: `${firstBlood}`, inline: true });
     if (topWeapons) fields.push({ name: t.topWeapons, value: `${topWeapons}`, inline: true });
 
@@ -712,8 +720,12 @@ const mvpDmg = Number(body.mvpDmg) || 0;
         .setTimestamp()
         .addFields(fields);
 
-    const channelId = await sendToGuildChannel(guild, 'zoneWarChannelId', { embed });
-    console.log(`⚔️ KILLLIST (guild=${guild.guildId}, kanal=${channelId || 'null'}, dil=${guild.lang}): ${won ? 'WIN' : 'LOSE'} ${redName} vs ${blueName} (${redKills}-${blueKills})`);
+    if (!killListResults.reserve(body.hwid, body.warId)) return res.json({ success: true, duplicate: true });
+    let channelId;
+    try { channelId = await sendToGuildChannel(guild, 'zoneWarChannelId', { embed }); }
+    catch (err) { killListResults.release(body.hwid, body.warId); throw err; }
+    if (!channelId) { killListResults.release(body.hwid, body.warId); return res.status(503).json({ success: false }); }
+    console.log(`⚔️ KILLLIST (bot=${body.playerName}, hwid=${body.hwid}, zone=${body.zone || '?'}, war=${body.warId}, guild=${guild.guildId}, kanal=${channelId}, dil=${isTr ? 'tr' : 'en'}): ${won ? 'WIN' : 'LOSE'} ${redName} vs ${blueName} (${redKills}-${blueKills})`);
     return res.json({ success: true, channelId });
 });
 
@@ -725,7 +737,7 @@ app.post('/api/pm/sent', async (req, res) => {
     const requesterId = String(body.requesterId || '');
     const interaction = requesterId ? getPendingInteraction(requesterId) : null;
     if (interaction) {
-        const targetName = String(body.targetName || body.target || 'oyuncu').slice(0, 64);
+        const targetName = String(body.targetName || body.target || 'Player').slice(0, 64);
         const message = String(body.message || '').slice(0, 200);
         const isTr = (await Guild.findOne({ guildId: interaction.guildId }))?.lang === 'tr';
         try {
@@ -750,14 +762,14 @@ app.post('/api/pm/reply', async (req, res) => {
     const body = req.body || {};
     const requesterId = String(body.requesterId || '');
     const reply = String(body.reply || '').slice(0, 200);
-    const author = String(body.author || 'Oyuncu');
+    const author = String(body.author || 'Player');
     const interaction = requesterId ? getPendingInteraction(requesterId) : null;
     console.log(`📥 PM-REPLY geldi (req=${String(requesterId || '').slice(0, 12)}, author=${author}, interaction=${interaction ? 'BULUNDU' : 'YOK'})`);
     if (interaction) {
         try {
             const userId = (interaction.user && interaction.user.id) ? interaction.user.id : requesterId;
             const embed = new EmbedBuilder()
-                .setTitle('📥 Oyun İçinden Yanıt')
+                .setTitle(L(await Guild.findOne({ guildId: interaction.guildId }), '📥 Oyun İçinden Yanıt', '📥 Reply from the Game'))
                 .setDescription(`<@${userId}> — **${author}**: ${reply}`)
                 .setColor(0x3498DB)
                 .setTimestamp();
@@ -781,11 +793,11 @@ app.post('/api/backup', async (req, res) => {
         return res.json({ success: false, message: "Bağlı Discord sunucusu bulunamadı." });
     }
 
-    const playerName = body.playerName || 'Bir oyuncu';
+    const playerName = body.playerName || L(guild, 'Bir oyuncu', 'A player');
     const ownGroup = body.ownGroup || '';
 
     const channelId = await sendToGuildChannel(guild, 'backupChannelId', {
-        content: `@here **${ownGroup || 'Grup'} backup istiyor!**\n${playerName} oyun içinde acil destek çağırıyor.`
+        content: L(guild, `@here **${ownGroup || 'Grup'} destek istiyor!**\n${playerName} oyun içinde acil destek çağırıyor.`, `@here **${ownGroup || 'Group'} needs backup!**\n${playerName} is requesting urgent in-game support.`)
     });
     console.log(`🆘 BACKUP (guild=${guild.guildId}, kanal=${channelId || 'null'}): ${playerName} (${ownGroup})`);
 
@@ -868,8 +880,8 @@ app.post('/api/grouppost', async (req, res) => {
         title: isTr ? 'Grup Logu' : 'Group Log',
         action: isTr ? 'Aksiyon' : 'Action',
         actionRole: isTr ? 'Rol Değişikliği' : 'Role Change',
-        actionRank: isTr ? 'Rank Değişikliği' : 'Rank Change',
-        actionKick: isTr ? 'Kick' : 'Kick',
+        actionRank: isTr ? 'Rütbe Değişikliği' : 'Rank Change',
+        actionKick: isTr ? 'Gruptan Atılma' : 'Kick',
         actionInvite: isTr ? 'Davet' : 'Invite',
         by: isTr ? 'Yapan' : 'Action taken by',
         on: isTr ? 'Üzerinde' : 'On whom',
@@ -915,7 +927,7 @@ app.post('/api/alog', async (req, res) => {
 
     const q = String(body.q || '').trim();
     if (!q) {
-        return res.json({ success: false, message: "Sorgu boş." });
+        return res.json({ success: false, message: L(guild, "Sorgu boş.", "Query is empty.") });
     }
 
     // isim (büyük/küçük duyarsız parça) veya ID/accid tam eşleşme
@@ -959,7 +971,9 @@ app.post('/api/alog', async (req, res) => {
     }
     let name = q;
     if (/^\d+$/.test(q) && rows.length && rows[0].target_name) name = rows[0].target_name;
-    const summary = `ALogs for ${name}: B:${cnt.B} | M-Bans:${cnt['M-Bans']} | D:${cnt.D} | J:${cnt.J} | K:${cnt.K} | M-Kicks:${cnt['M-Kicks']} | Mutes:${cnt.Mutes} | SubScores:${cnt.SubScores}`;
+    const summary = L(guild,
+        `${name} ceza kayitlari: Ban:${cnt.B} | Mod-Ban:${cnt['M-Bans']} | Silah:${cnt.D} | Hapis:${cnt.J} | Atilma:${cnt.K} | Mod-Atilma:${cnt['M-Kicks']} | Susturma:${cnt.Mutes} | Puan:${cnt.SubScores}`,
+        `ALogs for ${name}: B:${cnt.B} | M-Bans:${cnt['M-Bans']} | D:${cnt.D} | J:${cnt.J} | K:${cnt.K} | M-Kicks:${cnt['M-Kicks']} | Mutes:${cnt.Mutes} | SubScores:${cnt.SubScores}`);
     console.log(`📊 ALOG (guild=${guild.guildId}): q="${q}" -> ${summary}`);
     return res.json({ success: true, summary });
 });
@@ -971,7 +985,7 @@ app.post('/api/welcome', async (req, res) => {
         return res.json({ success: false, message: "Bağlı Discord sunucusu bulunamadı." });
     }
 
-    const playerName = body.playerName || 'Bir oyuncu';
+    const playerName = body.playerName || L(guild, 'Bir oyuncu', 'A player');
     const groupName = body.groupName || '';
 
     // Kişiye özel welcome mesajı (oyun içi ?welcomemsg ile ayarlanır)
@@ -1187,14 +1201,14 @@ app.post('/api/grole/list', async (req, res) => {
         setTimeout(async () => {
             try{
                 const still = getPendingInteraction(requesterId);
-                if(still) await still.editReply({ content: '⏰ Menü süresi doldu.', embeds: [], components: [] }).catch(()=>{});
+                if(still) await still.editReply({ content: L(await Guild.findOne({ guildId: interaction.guildId }), '⏰ Menü süresi doldu.', '⏰ Menu expired.'), embeds: [], components: [] }).catch(()=>{});
                 groleMemberCache.delete(requesterId);
                 grolePageCache.delete(requesterId);
             }catch{}
         }, 5*60*1000);
     } catch(e){
         console.error('GROLE-LIST edit hatasi:', e.message);
-        try{ await interaction.editReply({ content: `❌ Menü gösterilemedi: ${e.message}` }); }catch{}
+        try{ await interaction.editReply({ content: L(await Guild.findOne({ guildId: interaction.guildId }), '❌ Menü gösterilemedi. Tekrar dene.', '❌ Could not display the menu. Try again.') }); }catch{}
     }
     return res.json({ success: true });
 });
@@ -1249,14 +1263,14 @@ app.post('/api/gkick/list', async (req, res) => {
         setTimeout(async () => {
             try{
                 const still = getPendingInteraction(requesterId);
-                if(still) await still.editReply({ content: '⏰ Menü süresi doldu.', embeds: [], components: [] }).catch(()=>{});
+                if(still) await still.editReply({ content: L(await Guild.findOne({ guildId: interaction.guildId }), '⏰ Menü süresi doldu.', '⏰ Menu expired.'), embeds: [], components: [] }).catch(()=>{});
                 gkickMemberCache.delete(requesterId);
                 gkickPageCache.delete(requesterId);
             }catch{}
         }, 5*60*1000);
     } catch(e){
         console.error('GKICK-LIST edit hatasi:', e.message);
-        try{ await interaction.editReply({ content: `❌ Menü gösterilemedi: ${e.message}` }); }catch{}
+        try{ await interaction.editReply({ content: L(await Guild.findOne({ guildId: interaction.guildId }), '❌ Menü gösterilemedi. Tekrar dene.', '❌ Could not display the menu. Try again.') }); }catch{}
     }
     return res.json({ success: true });
 });
@@ -1308,7 +1322,7 @@ app.post('/api/grank/list', async (req, res) => {
         setTimeout(async () => {
             try{
                 const still = getPendingInteraction(requesterId);
-                if(still) await still.editReply({ content: '⏰ Menü süresi doldu.', embeds: [], components: [] }).catch(()=>{});
+                if(still) await still.editReply({ content: L(await Guild.findOne({ guildId: interaction.guildId }), '⏰ Menü süresi doldu.', '⏰ Menu expired.'), embeds: [], components: [] }).catch(()=>{});
                 grankMemberCache.delete(requesterId);
                 grankPageCache.delete(requesterId);
             }catch{}
@@ -1357,7 +1371,7 @@ io.on('connection', (socket) => {
                         if (channel) {
                             const clean = String(statsText).replace(/\{[0-9a-fA-F]{6}\}/g, '').trim();
                             const embed = new EmbedBuilder()
-                                .setTitle("📊 Group Stats")
+                                .setTitle(L(guild, '📊 Grup İstatistikleri', '📊 Group Stats'))
                                 .setDescription(clean.slice(0, 3000))
                                 .setColor(0x3498DB)
                                 .setTimestamp();
@@ -1434,7 +1448,7 @@ app.post('/api/groupchat', async (req, res) => {
 
     const channelId = guild.groupChatChannelId || null;
     const text = String(body.text || '').slice(0, 200);
-    const author = String(body.author || 'Oyuncu');
+    const author = String(body.author || 'Player');
 
     if (!channelId) {
         console.log(`⚠️ GROUPCHAT (guild=${guild.guildId}): kanal ayarlanmamış, mesaj atlanıyor.`);
@@ -1718,7 +1732,7 @@ app.post('/api/bot/status', async (req, res) => {
              ON DUPLICATE KEY UPDATE ${setClause}`,
             params
         );
-        console.log(`🤖 BOT-STATUS: '${name}' DB'ye yazildi (zscan=${body.zscan !== undefined ? (body.zscan ? 1 : 0) : 'korundu'}, gzt=${body.gzt !== undefined ? (body.gzt ? 1 : 0) : 'korundu'}, zgrp=${body.zgrp !== undefined ? (body.zgrp ? 1 : 0) : 'korundu'})`);
+        console.log(`🤖 BOT-STATUS: '${name}' (hwid=${body.hwid || '?'}, group=${body.groupName || '?'}) DB'ye yazildi (zscan=${body.zscan !== undefined ? (body.zscan ? 1 : 0) : 'korundu'}, gzt=${body.gzt !== undefined ? (body.gzt ? 1 : 0) : 'korundu'}, zgrp=${body.zgrp !== undefined ? (body.zgrp ? 1 : 0) : 'korundu'})`);
         return res.json({ success: true });
     } catch (err) {
         console.error('BOT-STATUS hatasi:', err.message);
