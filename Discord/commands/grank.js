@@ -1,6 +1,8 @@
 const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
+const { submit: submitTrackedCommand } = require('../utils/commandTracker');
+const { isOnline, replyOffline } = require('../utils/clientPresence');
 const { setPendingInteraction } = require('../utils/pendingReplies');
 
 module.exports = {
@@ -20,11 +22,12 @@ module.exports = {
             return interaction.reply({ content: '❌ Bu komutu kullanmaya yetkin yok.', ephemeral: true });
         }
         const hwid = guild.linkedHwids[0];
+        if (!isOnline(hwid)) return replyOffline(interaction, guild);
         const name = interaction.options.getString('name');
         const rank = interaction.options.getString('rank');
         if (name && rank) {
-            queueCommand(hwid, { type: 'grank', target: name, rank, requesterId: interaction.id });
-            await interaction.reply({ content: `✅ \`/grank ${name} → ${rank}\` kuyruga alindi — sayfali listede araniyor...`, ephemeral: true });
+            await submitTrackedCommand(interaction, guild, hwid, { type: 'grank', target: name, rank });
+
             console.log(`🏷️ [GRANK] Direkt: ${name} -> ${rank} (guild=${interaction.guildId})`);
             return;
         }

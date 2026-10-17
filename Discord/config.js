@@ -1,7 +1,7 @@
 ﻿const crypto = require('crypto');
 
 module.exports = {
-    PORT: process.env.PORT || 3000,
+    PORT: process.env.PORT || 3001, // bu sunucu: 3001 (3000 diger sunucunun)
 
     // Ortam degiskeni yoksa eski sabitler kullanilir (uretimde .env onerilir)
     DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN || "REDACTED_DISCORD_BOT_TOKEN",

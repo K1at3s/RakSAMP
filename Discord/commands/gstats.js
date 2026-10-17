@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
+const { isOnline, replyOffline } = require('../utils/clientPresence');
 const { setPendingInteraction } = require('../utils/pendingReplies');
 
 module.exports = {
@@ -21,6 +22,7 @@ module.exports = {
         }
 
         const hwid = guild.linkedHwids[0];
+        if (!isOnline(hwid)) return replyOffline(interaction, guild);
         const groupId = interaction.options.getString('group_id') || '';
 
         // Ilk mesaj yerine "dusunuyor..." goster; oyundan yanit gelince editReply ile sonuc atilir.

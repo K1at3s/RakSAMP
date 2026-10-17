@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS guilds (
     backup_channel_id VARCHAR(255) NULL,
     group_log_channel_id VARCHAR(255) NULL,
     bot_commands_channel_id VARCHAR(255) NULL,
+    category_id VARCHAR(255) NULL,
     group_chat_enabled TINYINT NOT NULL DEFAULT 0,
     lang VARCHAR(8) NOT NULL DEFAULT 'en',
     group_name VARCHAR(255) NOT NULL DEFAULT '',   -- botun oyun içi grubu (poll'dan öğrenilir)
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS players (
     packetloss DOUBLE NULL,
     fps INT NULL,
     ping INT NULL,
+    account_id INT NULL,               -- /stats hesap ID (kalici; id her reconnect'te degisir)
     updated_at DATETIME NULL
 );
 
@@ -88,6 +90,8 @@ CREATE TABLE IF NOT EXISTS welcome_per_user (
 -- Grup rol/rank değişiklik logları — /glog
 CREATE TABLE IF NOT EXISTS group_logs (
     id INT AUTO_INCREMENT PRIMARY KEY,
+    hwid VARCHAR(64) NULL,               -- hangi botun logu (kopya basina ayri)
+    group_name VARCHAR(96) NULL,         -- botun grubu (bilgi)
     actor_name VARCHAR(64) NULL,
     actor_acc BIGINT NULL,
     target_name VARCHAR(64) NULL,

@@ -1,20 +1,21 @@
 ﻿// hwid -> oyuna iletilecek bekleyen Discord komutlari (gecici, bellekte)
 // C++ istemci httplib kullandigi icin socket.io degil, /api/command/poll ile ceker.
 const commandOutbox = new Map();
+const commandEvents = new (require('node:events').EventEmitter)();
 
 function queueCommand(hwid, payload) {
     if (!hwid) return;
     const list = commandOutbox.get(hwid) || [];
-    if (list.length >= 50) list.shift(); // tasmayi onle
+    if (list.length >= 50) commandEvents.emit('dropped', hwid, list.shift());
     list.push(payload);
     commandOutbox.set(hwid, list);
 }
 
 function drainCommands(hwid) {
     if (!hwid) return [];
-    const list = (commandOutbox.get(hwid) || []).slice();
+    const list = (commandOutbox.get(hwid) || []).filter(command => !command.expiresAt || command.expiresAt > Date.now());
     commandOutbox.delete(hwid);
     return list;
 }
 
-module.exports = { queueCommand, drainCommands, commandOutbox };
+module.exports = { queueCommand, drainCommands, commandOutbox, commandEvents };

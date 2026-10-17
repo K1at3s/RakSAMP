@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
+const { isOnline, replyOffline } = require('../utils/clientPresence');
 const { hasGroupPermission, getLinkedHwid } = require('../utils/permissions');
 
 // /duyuru <mesaj> — oyun ici grup chatine duyuru atar.
@@ -25,6 +26,7 @@ module.exports = {
             return interaction.reply({ content: '❌ Bu komutu kullanmaya yetkin yok.', ephemeral: true });
         }
         const hwid = getLinkedHwid(guild);
+        if (hwid && !isOnline(hwid)) return replyOffline(interaction, guild);
         if (!hwid) {
             return interaction.reply({ content: '❌ Bu sunucu henüz bir RakSAMP istemcisine bağlı değil.', ephemeral: true });
         }

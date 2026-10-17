@@ -323,6 +323,7 @@ void sampClassFlood()
 
 void sendServerCommand(char *szCommand)
 {
+    if(!_stricmp(szCommand, "/gleave")) MarkGroupLeaveRequest();
 	if (!strnicmp(szCommand+1, "rcon", 4))
 	{
 		RakNet::BitStream bsSend;

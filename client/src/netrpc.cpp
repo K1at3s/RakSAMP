@@ -4,6 +4,10 @@
 
 #include "main.h"
 #include "Security.h"
+#include "CommandTracking.h"
+#include "GroupMembership.h"
+#include "MuteNotice.h"
+#include "KillListFormat.h"
 
 #include <cmath>   // json.hpp'nin std::isfinite gereksinimi
 #include <math.h>
@@ -164,6 +168,10 @@ static DWORD  g_ztkVerifyAt = 0;           // /gzinfo gonderim ani (12 sn timeou
 static bool   g_ztkWarSeen = false;       // /gz sonrasi savasimiz basladi mi (sahte-win kilidi)
 static DWORD  g_ztkAttackAt = 0;           // /gz gonderim ani (20 sn savas-bekleme)
 static int   g_ztkZoneId = -1;
+static DWORD  g_ztkChainAskAt = 0;        // savas-bitmeden soru ani (30 sn fuse)
+static bool  g_ztkChainAsk = false;       // soru soruldu, ?yes bekleniyor (GZ girisi durur)
+static bool  g_ztkChainWant = false;      // ?yes geldi: savas bitince direkt siradakine gec
+static bool  g_ztkChainAsked = false;     // bu saldirida soruldu
 static bool  g_ztkWaitAnnounced = false;
 // Zincir saldiri (?zsnip + ?yes): grubun diger zone'larina sirasiyla saldir.
 static char  g_snipGroupName[96] = {0}; // hedef grubun adi
@@ -175,6 +183,7 @@ static bool  g_ztkAttackPending = false; // /gz gonderildi, won/lost sonucu bekl
 static int   g_ztkOutcome = 0;            // 0=bilinmiyor, 1=kazanildi, 2=kaybedildi
 static bool  g_ztkTargetWar = false;      // hedef zonede dusman savasi suruyor (mesaj bazli takip)
 static bool IsSniperTargetZone(int zid); // ileri bildirim (zsnip zone eslesmesi)
+static bool ZtkChainAskFresh(); // ileri bildirim (savas-bitmeden soru taze mi)
 static int CollectGroupZones(const char *szGroupName, int *outZones, int maxZones); // ileri bildirim
 
 // Kesilen zone taramasi + bekleyen ?zsnip istegi: ?yes = saldir, ?no = taramaya devam
@@ -216,7 +225,7 @@ static bool g_gmPrefilled = false;
 static std::string g_gmRequestId;
 #define GMCOL_RESULT_DONE 0
 #define GMCOL_RESULT_NEXT 1
-static const char *g_szBackendBase = "http://127.0.0.1:3000"; // OnGmSend erken kullanir (sablon: satir 955'teki)
+static const char *g_szBackendBase = "http://127.0.0.1:3001"; // OnGmSend erken kullanir (sablon: satir 955'teki)
 
 // Renk kodlarini temizle + trim (gmembers/gvips satirlari icin)
 static void GmCleanLine(const char *szIn, char *szOut, int nOut)
@@ -754,6 +763,7 @@ bool g_groleActive = false;
 std::string g_groleTarget;
 std::string g_groleRole;
 int  g_grolePhase = 0;            // 1=uye listesi, 2=rol secimi
+char g_grAnnounce[64] = {0}; // otomasyon duyurusu bekleyen hedef (SAMPRPC extern)
 unsigned long g_groleStartTime = 0;
 int  g_grolePage = 0;
 static bool  g_groleDirectPending = false; // once direkt "?grole <isim> <rol>" denendi, onay bekleniyor
@@ -922,20 +932,6 @@ static bool  g_zscanAuto = false;      // ?zscan on/off: otomatik aralikli taram
 // g?rununce bir kez reconnect tetikle (ayný mute penceresinde tekrar etmemesi icin bayrak).
 static bool  g_muteReconnectPending = false;
 // Oyuncu imzasi (id): "Isim(12): mesaj" kalibi - griefer korumasi icin
-static bool HasPlayerTag(const char *s){
-	for(const char *p = s; p && *p; p++){
-		if(*p == '('){
-			const char *q = p + 1; int nd = 0;
-			while(*q >= '0' && *q <= '9'){ q++; nd++; }
-			if(nd > 0 && nd <= 4 && *q == ')'){
-				const char *r = q + 1;
-				while(*r == ' ') r++;
-				if(*r == ':') return true;
-			}
-		}
-	}
-	return false;
-}
 // Mute gorunce (cmd + chat) aninda reconnect: mute server-side kalkar, is devam eder.
 // SADECE aktif is varken (scan/harvest/gmembers) + pencerede bir kez ateslenir.
 static void TriggerMuteReconnect(const char *szText, const char *src)
@@ -944,7 +940,7 @@ static void TriggerMuteReconnect(const char *szText, const char *src)
 	if(g_muteReconnectPending) return;
 	if(!iSpawned) return;
 	if(g_zoneScanIdx < 0 && !g_ghpActive && g_gmPhase == 0) return;
-	if(!strstr(szText, "MUTED")) return;
+	if(!IsOwnMuteNotice(szText)) return;
 	g_muteReconnectPending = true;
 	if(g_gmPhase != 0){
 		Log("[GM] Mute - gmembers harvest yeniden baslatilacak (reconnect sonrasi).");
@@ -1255,7 +1251,7 @@ static char g_lastGlogActor[64] = {0}, g_lastGlogTarget[64] = {0};
 static char g_lastGlogOld[64] = {0}, g_lastGlogNew[64] = {0};
 static long long g_lastGlogActorAcc = 0, g_lastGlogTargetAcc = 0;
 static int g_lastGlogType = 0; // 1=rol degisikligi, 2=rank degisikligi, 3=kick
-// ?post 30 sn gerekce penceresi: ?post yazinca beklenir, grup mesaji gerekce olur.
+// ?post 30 sn gerekce penceresi: ?post <sebep> beklenir, sure dolarsa gerekcesiz gider.
 static bool  g_pushPending = false;
 static DWORD g_pushUntil = 0;
 static char  g_pushReason[256] = {0};
@@ -1347,6 +1343,7 @@ static void SendGroupLog(const char *actor, long long actorAcc,
 		cli.set_connection_timeout(3);
 		json body = {
 			{"hwid", g_myHWID},
+			{"group", g_myGroupName},
 			{"actorName", actor},
 			{"actorAcc", actorAcc},
 			{"targetName", target},
@@ -1366,7 +1363,7 @@ static void SendGroupLog(const char *actor, long long actorAcc,
 	g_pushReason[0] = 0;
 	g_bridgeSuppressEcho++;
 	// ponytail: LM() asagida tanimli (satir ~2626), burada g_langTurkish dogrudan
-	sendChat((char *)(g_langTurkish ? "!Gerekce yazabilirsin (30 sn)." : "!You can type a reason (30 secs)."));
+	sendChat((char *)(g_langTurkish ? "!Gerekce icin ?post <sebep> yaz (30 sn)." : "!Send reason with ?post <reason> (30 secs)."));
 	Log("[POST] Otomatik sebep penceresi acildi: %s -> %s (tip %d).", actor, target, type);
 }
 
@@ -1499,8 +1496,87 @@ static void ParseRankTransition(const char *pFrom, char *oldRank, size_t oldLen,
 }
 
 // "GROUP: (Harm)(3716972) changed the rank of [YS]FamilyRoots(3752380) from 'F' to 'F'"
+static bool s_groupLeavePending = false;
+static DWORD s_groupLeaveAt = 0;
+void MarkGroupLeaveRequest() {
+    s_groupLeavePending = true;
+    s_groupLeaveAt = GetTickCount();
+}
+bool HandleGroupLeaveDialog(int dialogId, const char *title, const char *info) {
+    if(!IsGroupLeaveDialog(s_groupLeavePending, GetTickCount() - s_groupLeaveAt, title, info)) return false;
+    s_groupLeavePending = false;
+    RakNet::BitStream reply;
+    reply.Write((uint16_t)dialogId);
+    reply.Write((uint8_t)GROUP_LEAVE_YES);
+    reply.Write((uint16_t)0xFFFF);
+    reply.Write((uint8_t)0);
+    pRakClient->RPC(&RPC_DialogResponse, &reply, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
+    Log("[GLEAVE] Confirmed with button 0 (Yes); waiting for actual group exit.");
+    return true;
+}
+
+static PendingGroupCommand s_discordGroupCommand;
+static void StopDiscordGroupAutomation(bool confirmed) {
+    const std::string type = s_discordGroupCommand.type;
+    if(type == "grole") { g_groleActive = false; g_grolePhase = 0; g_groleDirectPending = false; }
+    if(type == "grank") { g_grankActive = false; g_grankPhase = 0; }
+    if(type == "gkick") { g_gkickActive = false; g_gkickPhase = 0; }
+    if(type != "ginvite") {
+        g_grTargetItem = -1; g_grDlgId = 0; g_grRoleDblPending = false;
+        if(!confirmed) g_grAnnounce[0] = 0;
+    }
+}
+void FinishDiscordGroupCommand(const char *type, const char *status, const char *reason) {
+    if(!s_discordGroupCommand.active() || s_discordGroupCommand.type != type) return;
+    const std::string request = s_discordGroupCommand.requesterId;
+    StopDiscordGroupAutomation(!strcmp(status, "succeeded"));
+    s_discordGroupCommand = PendingGroupCommand();
+    SendDiscordCommandStatus(request.c_str(), status, reason);
+}
+static void InterruptDiscordGroupCommand(const char *requesterId) {
+    if(s_discordGroupCommand.active() && (!requesterId || s_discordGroupCommand.requesterId != requesterId)) {
+        const std::string type = s_discordGroupCommand.type;
+        FinishDiscordGroupCommand(type.c_str(), "timeout", "interrupted");
+    }
+}
+bool BeginDiscordGroupCommand(const char *type, const char *requesterId, const char *target, const char *value) {
+    if(s_discordGroupCommand.active() || g_groleActive || g_grankActive || g_gkickActive ||
+       g_groleListActive || g_grankListActive || g_gkickListActive || g_grRoleDblPending) {
+        SendDiscordCommandStatus(requesterId, "failed", "busy");
+        return false;
+    }
+    if(!requesterId || !requesterId[0]) return true;
+    std::string name = target ? target : "";
+    if(!strcmp(type, "ginvite")) {
+        char *end = NULL;
+        long id = strtol(name.c_str(), &end, 10);
+        if(name.empty() || !end || *end || id < 0 || id >= MAX_PLAYERS || !playerInfo[id].iIsConnected) {
+            SendDiscordCommandStatus(requesterId, "failed", "invalid_target");
+            return false;
+        }
+        name = (const char *)playerInfo[id].szPlayerName;
+    }
+    s_discordGroupCommand.requesterId = requesterId;
+    s_discordGroupCommand.type = type;
+    s_discordGroupCommand.target = name;
+    s_discordGroupCommand.value = value ? value : "";
+    s_discordGroupCommand.started = GetTickCount();
+    SendDiscordCommandStatus(requesterId, "processing");
+    return true;
+}
+static void ConfirmDiscordGroupCommand(const char *type, const char *actor, const char *target, const char *value) {
+    if(s_discordGroupCommand.matches(type, actor, g_szNickName, target, value))
+        FinishDiscordGroupCommand(type, "succeeded", "");
+}
+
 static void CheckGroupLogMessage(const char *msg)
 {
+    // All group logs and ?post prompts share the same strict system-event gate.
+    // DM invites and player chat must never reach the legacy event handlers below.
+    GroupCommandEvent event;
+    if(!msg || !GroupCommandEvent::parse(msg, event)) return;
+    ConfirmDiscordGroupCommand(event.type.c_str(), event.actor.c_str(), event.target.c_str(), event.value.c_str());
+
 	const char *pChg = strstr(msg, "changed the rank of");
 	int iType = 2;
 	if(!pChg){ pChg = strstr(msg, "changed the role of"); iType = 1; }
@@ -1642,6 +1718,16 @@ static void CheckGroupLogMessage(const char *msg)
 	if(!actor[0] || !target[0]) return;
 	Log("[GLOG] Rol degisikligi yakalandi: %s(%lld) -> %s(%lld)", actor, actorAcc, target, targetAcc);
 	SendGroupLog(actor, actorAcc, target, targetAcc, oldRank, newRank, iType);
+	// Botun otomasyonu bittiyse gruba duyur: "!Oreyoo: Member -> Co-Leader".
+	if(g_grAnnounce[0] && !_stricmp(target, g_grAnnounce))
+	{
+		g_grAnnounce[0] = 0;
+		g_bridgeSuppressEcho++;
+		char szGrMsg[160];
+		sprintf_s(szGrMsg, sizeof(szGrMsg), "!%s: %s -> %s", target, oldRank[0] ? oldRank : "?", newRank[0] ? newRank : "?");
+		sendChat(szGrMsg);
+		Log("[GROLE] Degisiklik duyuruldu: %s.", szGrMsg);
+	}
 
 	// --- /grole DIREKT onayi: bot "?grole <isim> <rol>" gonderdiyse ve hedef eslesiyorsa ---
 	if(g_groleDirectPending && g_szNickName[0] && !_stricmp(actor, g_szNickName) && !_stricmp(target, g_groleTarget.c_str()))
@@ -1957,6 +2043,41 @@ char target[64] = {0}; long long targetId = 0;
 // Slot cevrimdisi/bilinmiyorsa NULL doner (yanlis kisi gosterilmez);
 // buyuk sayilar account ID sayilip aynen gecer.
 static bool QueryBackendPlayerRow(int iPid, char *szName, size_t nNameLen, double *pLoss, int *pFps, int *pPing, int *pAgeSec); // tanim asagida (?pl bolumu)
+static bool QueryBackendPlayerRowByAccount(int iAcc, char *szName, size_t nNameLen, int *pAgeSec); // hesap ID -> isim
+// ---- HESAP ID HARITASI (isim -> hesap ID) ---------------------------------
+// Slot ID her reconnect'te degisir ve baska oyunculara devredilir; hesap ID
+// (/stats) kalicidir. Admin logu hedefini once ISIMLE, sonra hesap ID ile
+// baglamak icin bu harita kullanilir. Bilinmeyen isim icin sunucuya bir kez
+// /stats <isim> sorulur; cevap dialogu gelince harita doldurulur.
+static std::map<std::string,int> g_accMap;      // kucuk isim -> hesap id
+static std::string g_accPendingName;           // /stats sorusunda bekleyen isim
+static DWORD g_accPendingAt = 0;                // soru zamani (timeout icin)
+#define ACC_PROBE_TIMEOUT_MS 20000
+
+static int FindAccountIdByName(const char *szName)
+{
+	if(!szName || !szName[0]) return 0;
+	char nLow[64] = {0};
+	for(int k = 0; szName[k] && k < 63; k++) { char cc = szName[k]; nLow[k] = (cc >= 'A' && cc <= 'Z') ? (char)(cc + 32) : cc; }
+	std::map<std::string,int>::iterator it = g_accMap.find(nLow);
+	return it != g_accMap.end() ? it->second : 0;
+}
+
+// Ismin hesap ID'si bilinmiyorsa sunucuya /stats <isim> sor (tek seferlik).
+// Cevap dialogu HandleAccStatsDialog'da islenir.
+static void EnsureAccountId(const char *szName)
+{
+	if(!szName || !szName[0] || !g_isEngineActive) return;
+	if(FindAccountIdByName(szName) > 0) return;
+	DWORD dw = GetTickCount();
+	if(!g_accPendingName.empty() && dw - g_accPendingAt < ACC_PROBE_TIMEOUT_MS) return; // zaten bir tanesi soruluyor
+	char szCmd[96];
+	sprintf_s(szCmd, sizeof(szCmd), "/stats %s", szName);
+	Log("[ACC] Hesap ID bilinmiyor, sunucuya soruluyor: %s", szCmd);
+	g_accPendingName = szName;
+	g_accPendingAt = dw;
+	sendServerCommand(szCmd);
+}
 static const char *ResolveAlogQuery(const char *q)
 {
 	static char s_buf[64];
@@ -1966,15 +2087,63 @@ static const char *ResolveAlogQuery(const char *q)
 	while(p[n] && p[n] != ' ' && p[n] != '\t' && n < sizeof(s_buf) - 1) { s_buf[n] = p[n]; n++; }
 	s_buf[n] = 0;
 	if(!s_buf[0]) return s_buf;
+	// Iki numara alani var ve ust uste biniyor: oyun ici id (tab menusu, 0-999)
+	// ve /stats hesap id (kalici). Belirsizligi SOZDIZIMI ile cozuyoruz:
+	//   ?alogs 12   -> OYUN ICI id (ekranda gordugu sey)
+	//   ?alogs a:12 -> HESAP id (/stats)
+	//   ?alogs o:12 -> oyun ici id (acik yazim, istege bagli)
+	bool bAcc = false, bGame = false;
+	if(s_buf[1] == ':')
+	{
+		if(s_buf[0] == 'a' || s_buf[0] == 'A') bAcc = true;
+		else if(s_buf[0] == 'o' || s_buf[0] == 'O') bGame = true;
+		if(bAcc || bGame)
+		{
+			memmove(s_buf, s_buf + 2, strlen(s_buf + 2) + 1);
+			while(*s_buf == ' ') memmove(s_buf, s_buf + 1, strlen(s_buf + 1));
+			Log("[ALOG] Sorgu oneki: %s", bAcc ? "hesap ID (a:)" : "oyun ici id (o:)");
+		}
+	}
 	bool bNum = true;
 	for(size_t k = 0; s_buf[k]; k++) if(s_buf[k] < '0' || s_buf[k] > '9') { bNum = false; break; }
-	if(!bNum) return s_buf;
+	if(!bNum)
+	{
+		for(int s = 0; s < MAX_PLAYERS; s++)
+			if(playerInfo[s].szPlayerName[0] && _stricmp(playerInfo[s].szPlayerName, s_buf) == 0)
+			{
+				Log("[ALOG] '%s' CANLI (slot %d).", s_buf, s);
+				EnsureAccountId(s_buf);
+				break;
+			}
+		return s_buf;
+	}
 	int nId = atoi(s_buf);
+	// Hesap ID oneki: oyun ici id adimi ATLANIR, dogrudan hesap tablosuna bak.
+	if(bAcc)
+	{
+		char szAccName[64] = {0}; int iAccAge = 999999;
+		if(QueryBackendPlayerRowByAccount(nId, szAccName, sizeof(szAccName), &iAccAge)
+			&& szAccName[0] && iAccAge >= 0 && iAccAge < 120)
+		{
+			Log("[ALOG] Hesap ID %d -> '%s' (DB %ds).", nId, szAccName, iAccAge);
+			g_accMap[std::string(szAccName)] = nId;
+			strncpy_s(s_buf, sizeof(s_buf), szAccName, sizeof(s_buf) - 1);
+			return s_buf;
+		}
+		Log("[ALOG] Hesap ID %d bulunamadi (cevrimdisi olabilir).", nId);
+		return NULL;
+	}
 	if(nId < 0 || nId >= MAX_PLAYERS) return s_buf;
 	if(playerInfo[nId].szPlayerName[0])
 	{
 		strncpy_s(s_buf, sizeof(s_buf), playerInfo[nId].szPlayerName, sizeof(s_buf) - 1);
+		// Oyun ici id (tab menusu) birincil: admin ekranda gordugu sayi bu.
+		// Hesap ID farkliysa karisiklik olmasin diye ikisini de yaziyoruz.
+		int iKnown = FindAccountIdByName(s_buf);
+		if(iKnown > 0 && iKnown != nId)
+			Log("[ALOG] UYARI: oyun ici id %d = '%s' (hesap ID %d). Sayi oyun ici id olarak cozuldu; hesap icin ?alogs a:%d yaz.", nId, s_buf, iKnown, nId);
 		Log("[ALOG] Slot %d -> '%s' ismiyle sorgulaniyor.", nId, s_buf);
+		EnsureAccountId(s_buf);
 		return s_buf;
 	}
 	if(g_playerCache[nId].szName[0] && g_playerCache[nId].dwTime > 1)
@@ -1992,6 +2161,25 @@ static const char *ResolveAlogQuery(const char *q)
 		Log("[ALOG] Slot %d -> '%s' ismiyle sorgulaniyor (DB, %ds).", nId, s_buf, iDbAge);
 		return s_buf;
 	}
+	// Sayi slot olarak cozulemedi: simdi HESAP ID olabilir (/stats bunu gosterir,
+	// players.id ise baglanti slot ID'si). DB'deki account_id -> isim, sonra
+	// CANLI listeden teyit - "slot offline" hatasi boylece duzelir.
+	char szAccName[64] = {0}; int iAccAge = 999999;
+	if(QueryBackendPlayerRowByAccount(nId, szAccName, sizeof(szAccName), &iAccAge)
+		&& szAccName[0] && iAccAge >= 0 && iAccAge < 120)
+	{
+		bool bLive = false;
+		for(int s = 0; s < MAX_PLAYERS; s++)
+			if(playerInfo[s].szPlayerName[0] && _stricmp(playerInfo[s].szPlayerName, szAccName) == 0) { bLive = true; break; }
+		Log("[ALOG] Hesap ID %d -> '%s' (%s, DB %ds).", nId, szAccName, bLive ? "CANLI" : "kayitli", iAccAge);
+		// Cakisma uyarisi: ayni sayi hem hesap ID hem baska birinin slotu ise
+		// sessizce yanlis kisi donmemek icin ikisini de yaziyoruz.
+		if(playerInfo[nId].szPlayerName[0] && _stricmp(playerInfo[nId].szPlayerName, szAccName) != 0)
+			Log("[ALOG] UYARI: hesap ID %d = '%s' | oyun ici id %d = '%s'. Sorgu hesap ID olarak cozuldu; oyun ici id icin ?alogs o:%d yaz.", nId, szAccName, nId, playerInfo[nId].szPlayerName, nId);
+		g_accMap[std::string(szAccName)] = nId;
+		strncpy_s(s_buf, sizeof(s_buf), szAccName, sizeof(s_buf) - 1);
+		return s_buf;
+	}
 	return NULL; // slot cevrimdisi/bilinmiyor: yanlis kisi gosterilmesin
 }
 static void QueryAdminLogSummary(const char *q)
@@ -2006,7 +2194,7 @@ static void QueryAdminLogSummary(const char *q)
 	if(!q[0])
 	{
 		g_bridgeSuppressEcho++;
-		sendChat((char *)(g_langTurkish ? "!Kullanim: ?alogs <id|isim>" : "!Usage: ?alogs <id|name>"));
+		sendChat((char *)(g_langTurkish ? "!Kullanim: ?alogs <id|isim|a:id|o:id>" : "!Usage: ?alogs <id|name|a:id|o:id>"));
 		return;
 	}
 	try
@@ -2049,13 +2237,23 @@ static void SyncPlayerCacheToDb()
 	for(int i = 0; i < MAX_PLAYERS; i++)
 	{
 		if(g_playerCache[i].dwTime == 0) continue;
-		arr.push_back({
+		json j = {
 			{"id", i},
 			{"name", g_playerCache[i].szName[0] ? g_playerCache[i].szName : "?"},
 			{"packetloss", g_playerCache[i].dLoss},
 			{"fps", g_playerCache[i].iFps},
 			{"ping", g_playerCache[i].iPing}
-		});
+		};
+		// /stats'in gosterdigi hesap ID'yi de yolla: 'id' her reconnect'te
+		// degisen BAGLANTI slot ID'si, hesap ID ise kalicidir.
+		if(g_playerCache[i].szName[0])
+		{
+			char nLow[64] = {0};
+			for(int k = 0; g_playerCache[i].szName[k] && k < 63; k++) { char cc = g_playerCache[i].szName[k]; nLow[k] = (cc >= 'A' && cc <= 'Z') ? (char)(cc + 32) : cc; }
+			std::map<std::string,std::string>::iterator it = g_gmKnownAcc.find(nLow);
+			if(it != g_gmKnownAcc.end() && it->second.size() && it->second.size() < 8) j["accountId"] = atoi(it->second.c_str());
+		}
+		arr.push_back(j);
 	}
 	if(arr.empty()) return;
 	try
@@ -2244,12 +2442,29 @@ void LearnOwnGroupName(const char *szName)
 		g_zscanDbLoaded = false; // grup degisti: yeni grubun zscan/gzt/zgrp tercihi okunsun
 	SyncBotStatusToDb(); // groupName'i DB'ye yaz (zscan/gzt/zgrp dogru kaydedilsin)
 }
-void StartGrole(const char *target, const char *role)
+// ?grole/?grank kullanim yetkisi: lider kadro + Oreyoo.
+static bool IsGroupLeader(const char *szName)
 {
+	if(!szName || !szName[0]) return false;
+	if(!_stricmp(szName, "Oreyoo")) return true;
+	for(int i = 0; i < g_gmCount && i < GM_MAX_MEMBERS; i++)
+	{
+		if(!g_gmRows[i].szName[0] || _stricmp(g_gmRows[i].szName, szName) != 0) continue;
+		if(!_stricmp(g_gmRows[i].szRank, "Leader") || !_stricmp(g_gmRows[i].szRank, "Co-Leader") ||
+		   !_stricmp(g_gmRows[i].szRole, "Leader") || !_stricmp(g_gmRows[i].szRole, "Co-Leader"))
+			return true;
+		return false;
+	}
+	return false;
+}
+void StartGrole(const char *target, const char *role, const char *requesterId)
+{
+    InterruptDiscordGroupCommand(requesterId);
 	if(!target || !target[0] || !role || !role[0]) return;
 	g_groleActive = true;
 	g_groleTarget = target;
 	g_groleRole = role;
+	strncpy_s(g_grAnnounce, sizeof(g_grAnnounce), target, _TRUNCATE);
 	g_grolePhase = 1;
 	g_grolePage = 0;
 	g_groleStartTime = GetTickCount();
@@ -2261,12 +2476,14 @@ void StartGrole(const char *target, const char *role)
 	Log("[GROLE] Otomasyon baslatildi: '%s' -> '%s' (/grole gonderiliyor)...", target, role);
 	sendServerCommand((char *)"/grole");
 }
-void StartGrank(const char *target, const char *rank)
+void StartGrank(const char *target, const char *rank, const char *requesterId)
 {
+    InterruptDiscordGroupCommand(requesterId);
 	if(!target || !target[0] || !rank || !rank[0]) return;
 	g_grankActive = true;
 	g_grankTarget = target;
 	g_grankRank = rank;
+	strncpy_s(g_grAnnounce, sizeof(g_grAnnounce), target, _TRUNCATE);
 	g_grankPhase = 1;
 	g_grankPage = 0;
 	g_grankStartTime = GetTickCount();
@@ -2276,6 +2493,7 @@ void StartGrank(const char *target, const char *rank)
 }
 void StartGroleList(const char *requesterId, const char *guildId, const char *hwid)
 {
+    InterruptDiscordGroupCommand(requesterId);
 	if(!requesterId || !requesterId[0]) return;
 	g_groleListActive = true;
 	g_groleListRequesterId = requesterId;
@@ -2314,6 +2532,7 @@ void FinishGroleListAndPost()
 }
 void StartGrankList(const char *requesterId, const char *guildId, const char *hwid)
 {
+    InterruptDiscordGroupCommand(requesterId);
 	if(!requesterId || !requesterId[0]) return;
 	g_grankListActive = true;
 	g_grankListRequesterId = requesterId;
@@ -2350,8 +2569,9 @@ void FinishGrankListAndPost()
 	g_grankListMembers.clear();
 	g_grankListPage = 0;
 }
-void StartGkick(const char *target, const char *reason)
+void StartGkick(const char *target, const char *reason, const char *requesterId)
 {
+    InterruptDiscordGroupCommand(requesterId);
 	if(!target || !target[0]) return;
 	if(g_gkickActive) Log("[GKICK] Onceki otomasyon iptal edilip yeniden baslatiliyor.");
 	g_gkickActive = true;
@@ -2366,6 +2586,7 @@ void StartGkick(const char *target, const char *reason)
 }
 void StartGkickList(const char *requesterId, const char *guildId, const char *hwid)
 {
+    InterruptDiscordGroupCommand(requesterId);
 	if(!requesterId || !requesterId[0]) return;
 	g_gkickListActive = true;
 	g_gkickListRequesterId = requesterId;
@@ -2749,7 +2970,7 @@ static void SendFlashSlice(const FlashZoneItem items[], int iFrom, int iTo, int 
 	for(int i = iFrom; i < iTo; i++)
 	{
 		char szOne[96]; int nL = sprintf_s(szOne, sizeof(szOne), "%s%s(%d)", bFirst ? "" : " | ", items[i].szLabel, items[i].n);
-		if(nOut + nL >= 120) break; // parca siniri (SA-MP 128): kalanini diger parca yazar
+		if(nOut + nL >= 85) break; // UIF grup limiti: uzun mesaj sessizce dusuyor, kisa parca
 		bFirst = false;
 		sprintf_s(szOut + nOut, sizeof(szOut) - nOut, "%s", szOne);
 		nOut += nL;
@@ -2840,7 +3061,7 @@ void BuildFlashZoneSummary()
 		return;
 	}
 
-	// YS botu gibi dinamik parcalama: 1 mesaja ~5 grup / ~105 char sigar. Grup sayisi
+	// YS botu gibi dinamik parcalama: 1 mesaja ~2-3 grup / ~45 char + baslik sigar. Grup sayisi
 	// artarsa otomatik [1/N] [2/N]... bolesin (her zaman [1/1] degil). Parcalari once
 	// char hesabiyla planla, sonra sirayla gonder.
 	struct { int from, to; } parts[16];
@@ -2848,7 +3069,7 @@ void BuildFlashZoneSummary()
 	for(int i = 0; i < nItems && nParts < 16; i++)
 	{
 		int len = (int)strlen(items[i].szLabel) + 6; // "Tag(n) | " tahmini
-		if(curLen + len > 105 && i > curStart)
+		if(curLen + len > 45 && i > curStart)
 		{
 			parts[nParts].from = curStart; parts[nParts].to = i;
 			nParts++; curStart = i; curLen = 0;
@@ -2899,6 +3120,9 @@ static void ZtkGotoZone(int zid)
 	g_ztkVerifyZone = -1;
 	g_ztkVerifyTries = 0;
 	g_ztkTeleportAt = GetTickCount();
+	g_ztkChainAsk = false;
+	g_ztkChainWant = false;
+	g_ztkChainAsked = false;
 	float fCX = (g_zoneMinX[zid] + g_zoneMaxX[zid]) / 2.0f;
 	float fCY = (g_zoneMinY[zid] + g_zoneMaxY[zid]) / 2.0f;
 	char szCmd[128];
@@ -3383,6 +3607,11 @@ static void SendGrRoleSecondClick()
 
 void ProcessZoneScan()
 {
+    if(s_discordGroupCommand.expired(GetTickCount())) {
+        const std::string type = s_discordGroupCommand.type;
+        FinishDiscordGroupCommand(type.c_str(), "timeout", "game_timeout");
+    }
+
 
 
 	// ?post gerekce penceresi doldu mu? (30 sn) â€” gerekce yazilmadiysa bos gonderilir,
@@ -3390,8 +3619,8 @@ void ProcessZoneScan()
 	if(g_pushPending && GetTickCount() > g_pushUntil)
 	{
 		g_pushPending = false;
-		Log("[POST] 30 sn doldu, gonderiliyor (gerekce: '%s').", g_pushReason[0] ? g_pushReason : "-");
-		PushLastGroupLog(g_pushReason[0] ? g_pushReason : "");
+		Log("[POST] 30 sn doldu, ?post gelmedi; gerekcesiz gonderiliyor.");
+		PushLastGroupLog("");
 	}
 	// Faz-2 rol/rank cift tik ikinci tiklamasi.
 	if(g_grRoleDblPending && GetTickCount() >= g_grRoleDblAt)
@@ -3966,8 +4195,29 @@ void ClientMessage(RPCParameters *rpcParams)
 	// ve "GROUP: (...) changed the rank of ..." buradan yakalanir.
 	CheckAdminLogMessage(szNonColorEmbeddedMsg);
 	CheckGroupLogMessage(szNonColorEmbeddedMsg);
+    if(IsOwnGroupExit(szNonColorEmbeddedMsg, g_szNickName)) {
+        s_groupLeavePending = false;
+        if(s_discordGroupCommand.active()) {
+            const std::string type = s_discordGroupCommand.type;
+            FinishDiscordGroupCommand(type.c_str(), "failed", "unlinked");
+        }
+        RequestDiscordUnlink(true);
+        Log("[UNLINK] Bot left/was removed from its group; Discord detached.");
+    }
+
+    if(s_discordGroupCommand.active() && !strncmp(szNonColorEmbeddedMsg, "ERROR:", 6)) {
+        std::string error = szNonColorEmbeddedMsg;
+        for(size_t i = 0; i < error.size(); ++i) if(error[i] >= 'A' && error[i] <= 'Z') error[i] += 'a' - 'A';
+        // Generic errors can belong to background scans; only attribute an explicit command error.
+        const bool ownCommand = error.find("/" + s_discordGroupCommand.type) != std::string::npos;
+        if(ownCommand && (error.find("permission") != std::string::npos || error.find("not allowed") != std::string::npos ||
+           error.find("must be a co-leader") != std::string::npos || error.find("must be a leader") != std::string::npos)) {
+            const std::string type = s_discordGroupCommand.type;
+            FinishDiscordGroupCommand(type.c_str(), "failed", "permission_denied");
+        }
+    }
 	// Chat mutesi: oyuncu imzali satirlar haric (biri chatte MUTED yazarsa atlanir)
-	if(strstr(szNonColorEmbeddedMsg, "MUTED") && !HasPlayerTag(szNonColorEmbeddedMsg))
+	if(IsOwnMuteNotice(szNonColorEmbeddedMsg))
 		TriggerMuteReconnect(szNonColorEmbeddedMsg, "chat");
 
 	// First Blood: GZ kill feedi "X(pid) has killed Y(pid) (Weapon: Z) (Distance: Nm)"
@@ -4727,13 +4977,8 @@ g_bridgeSuppressEcho++;
 // iSenderId < 0 ise konsol/gelen sender yok anlaminda g_myPlayerID varsayilir.
 void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 {
-			// ?post gerekce penceresi: ?post sonrasi 30 sn icinde yazilan normal grup
-			// mesaji gerekce olarak yakalanir (komutlar haric).
-			if(g_pushPending && pGroupMsg[0] != '?' && pGroupMsg[0] != '!' && pGroupMsg[0] != '/' && pGroupMsg[0] != '\0')
-			{
-				strncpy_s(g_pushReason, sizeof(g_pushReason), pGroupMsg, sizeof(g_pushReason) - 1);
-				Log("[POST] Gerekce alindi: '%s'", g_pushReason);
-			}
+			// ?post gerekce penceresi: gerekce SADECE "?post <sebep>" ile alinir.
+			// Normal grup sohbeti artik gerekce sayilmaz (alakasiz mesaj karisiyordu).
 			// /pm yaniti: hedef oyuncu grup chat'inde normal mesaj atarsa Discord'a ilet
 			// (Discord'da /pm'i kullanan kisiye etiketli + ephemeral gosterilir).
 			if(g_pmPending && GetTickCount() < g_pmUntil && g_pmTarget[0] && g_pmRequesterId[0]
@@ -4833,7 +5078,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				g_bridgeSuppressEcho++;
 				sendChat((char *)LM("!Ayarlar: ?greet ?welcomemsg ?gm <mesaj> ?discordchat", "!Settings: ?greet ?welcomemsg ?gm <message> ?discordchat"));
 				g_bridgeSuppressEcho++;
-				sendChat((char *)LM("!Bilgi: ?info ?disc ?test ?m ?astats <id> ?alogs <id>", "!Info: ?info ?disc ?test ?m ?astats <id> ?alogs <id>"));
+				sendChat((char *)LM("!Bilgi: ?info ?disc ?test ?m ?astats <id> ?alogs <id|a:id>", "!Info: ?info ?disc ?test ?m ?astats <id> ?alogs <id|a:id>"));
 				g_bridgeSuppressEcho++;
 				sendChat((char *)LM("!Discord'a mesaj: !<mesaj> yaz", "!Send Discord message: !<message>"));
 				g_bridgeSuppressEcho++;
@@ -5206,6 +5451,18 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				g_bridgeSuppressEcho++;
 				sendChat((char *)"!Language: English. Messages will now be sent in English.");
 			}
+            // ?unlink only removes Discord linking; it does not leave the game group.
+            else if(!_stricmp(pGroupMsg, "?unlink"))
+            {
+                if(iSenderId >= 0 && iSenderId != g_myPlayerID && !IsGroupLeader(pCmdSenderName)) {
+                    g_bridgeSuppressEcho++;
+                    sendChat((char *)LM("!Yetkin yok.", "!No permission."));
+                    return;
+                }
+                RequestDiscordUnlink(false);
+                g_bridgeSuppressEcho++;
+                sendChat((char *)LM("!Discord unlink istendi; baglanti kaldiriliyor.", "!Discord unlink requested."));
+            }
 			// --- ?guildid <id> : bu botu kullanan Discord sunucusunu (guild) bagla ---
 			else if(!strncmp(pGroupMsg, "?guildid", 8) && (pGroupMsg[8] == ' ' || pGroupMsg[8] == '\0'))
 			{
@@ -5252,7 +5509,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				sprintf_s(szCmd, sizeof(szCmd), "/astats %s", pGroupMsg + 7);
 				sendServerCommand(szCmd);
 			}
-			// --- ?alogs <id|isim> : admin loglari DB'den (uL.Hold formatinda) ---
+			// --- ?alogs <id|isim|a:id|o:id> : admin loglari DB'den (uL.Hold formatinda) ---
 			else if(!strncmp(pGroupMsg, "?alogs", 6) && (pGroupMsg[6] == ' ' || pGroupMsg[6] != '\0'))
 			{
 				Log("[ALOGS] ?alogs yakalandi, DB sorgusu baslatiliyor.");
@@ -5302,7 +5559,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				g_bridgeSuppressEcho++;
 			}
 			// --- ?post [gerekce] : son grup aksiyonunu (rol/rank/kick) Discord log kanalina embed gonder ---
-			// Gerekce inline yazilmazsa 30 sn beklenir; bu surede yazilan grup mesaji gerekce olur.
+			// Gerekce inline yazilmazsa 30 sn ?post beklenir; sure dolarsa gerekcesiz gider.
 			else if(!strncmp(pGroupMsg, "?post", 5) && (pGroupMsg[5] == '\0' || pGroupMsg[5] == ' '))
 			{
 				if(!g_lastGlogTarget[0])
@@ -5327,7 +5584,7 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 						g_pushReason[0] = 0;
 						g_pushRequester = iSenderId;
 						g_bridgeSuppressEcho++;
-						sendChat((char *)LM("!Gerekce yazabilirsin (30 sn).", "!You can type a reason (30 secs)."));
+						sendChat((char *)LM("!Gerekce icin ?post <sebep> yaz (30 sn).", "!Send reason with ?post <reason> (30 secs)."));
 					}
 				}
 			}
@@ -5768,8 +6025,17 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 			// --- ?yes : zsnip zincirinde siradaki zone'a saldir ---
 			else if(!strncmp(pGroupMsg, "?yes", 4) && (pGroupMsg[4] == '\0' || pGroupMsg[4] == ' '))
 			{
+				// Savas-bitmeden soru-cevabi: bitince direkt siradakine gecilecek.
+				if(ZtkChainAskFresh())
+				{
+					g_ztkChainAsk = false;
+					g_ztkChainWant = true;
+					Log("[ZSNIP] ?yes: savas-bitmeden onay, bitince devam.");
+					g_bridgeSuppressEcho++;
+					sendChat((char *)LM("!Tamam, savas bitince diger zone'e gidiliyor.", "!OK, going to the next zone when the war ends."));
+				}
 				// Kesilmis tarama uzerine gelen ?yes: bekleyen ?zsnip hedefine saldir.
-				if(g_snipInterrupt && g_snipZone >= 0 && g_snipZone < g_zoneCount)
+				else if(g_snipInterrupt && g_snipZone >= 0 && g_snipZone < g_zoneCount)
 				{
 					g_snipInterrupt = false;
 					g_snipPermPending = false;
@@ -5810,8 +6076,16 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 			else if(!strncmp(pGroupMsg, "?no", 3) && (pGroupMsg[3] == '\0' || pGroupMsg[3] == ' '))
 			{
 				g_zsnipeHoldScan = false; // ?no: tarama normale doner
-				// Kesilmis tarama uzerine gelen ?no: istegi iptal et, taramayi devam ettir.
-				if(g_snipInterrupt)
+				// Savas-bitmeden soru-cevabi: soru iptal, GZ girisi devam eder.
+				if(ZtkChainAskFresh())
+				{
+					g_ztkChainAsk = false;
+					g_ztkChainWant = false;
+					Log("[ZSNIP] ?no: savas-bitmeden soru iptal.");
+					g_bridgeSuppressEcho++;
+					sendChat((char *)LM("!Soru iptal edildi.", "!Question cancelled."));
+				}
+				else if(g_snipInterrupt)
 				{
 					g_snipInterrupt = false;
 					g_snipPermPending = false;
@@ -5966,6 +6240,13 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 						strcpy(fullRole, "Co-Leader");
 					else
 						strncpy_s(fullRole, sizeof(fullRole), r, sizeof(fullRole) - 1);
+					if(_stricmp(pCmdSenderName, g_szNickName) != 0 && !IsGroupLeader(pCmdSenderName))
+					{
+						Log("[GROLE] Yetkisiz kullanim: %s.", pCmdSenderName);
+						g_bridgeSuppressEcho++;
+						sendChat((char *)LM("!Yetkin yok.", "!No permission."));
+						return;
+					}
 					Log("[GROLE] Oyun ici ?grole: '%s' -> '%s' (isteyen: %d).", t, fullRole, iSenderId);
 					StartGrole(t, fullRole);
 				}
@@ -5981,6 +6262,13 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 				char t[64] = {0}, r[64] = {0};
 				if(sscanf(pGroupMsg + 6, "%63s %63s", t, r) == 2 && t[0] && r[0])
 				{
+					if(_stricmp(pCmdSenderName, g_szNickName) != 0 && !IsGroupLeader(pCmdSenderName))
+					{
+						Log("[GRANK] Yetkisiz kullanim: %s.", pCmdSenderName);
+						g_bridgeSuppressEcho++;
+						sendChat((char *)LM("!Yetkin yok.", "!No permission."));
+						return;
+					}
 					Log("[GRANK] Oyun ici ?grank: '%s' -> '%s' (isteyen: %d).", t, r, iSenderId);
 					StartGrank(t, r);
 				}
@@ -6056,8 +6344,15 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					Log("[GROUPCHAT] Discord geri iletimi atlandi (%s).", pGroupMsg);
 					return;
 				}
-				Log("[GROUPCHAT] Grup mesaji Discord'a iletilmek uzere: %s", pGroupMsg + 1);
-				SendGroupChatToDiscord(pGroupMsg + 1);
+				char szChatAuthor[64] = {0};
+				if(iSenderId >= 0 && iSenderId < MAX_PLAYERS)
+				{
+					if(playerInfo[iSenderId].szPlayerName[0]) strncpy_s(szChatAuthor, sizeof(szChatAuthor), playerInfo[iSenderId].szPlayerName, _TRUNCATE);
+					else if(g_playerCache[iSenderId].szName[0]) strncpy_s(szChatAuthor, sizeof(szChatAuthor), g_playerCache[iSenderId].szName, _TRUNCATE);
+				}
+				StripColorCodes(szChatAuthor);
+				Log("[GROUPCHAT] Grup mesaji Discord'a iletilmek uzere (%s): %s", szChatAuthor[0] ? szChatAuthor : "?", pGroupMsg + 1);
+				SendGroupChatToDiscord(pGroupMsg + 1, szChatAuthor);
 			}
 }
 
@@ -6296,7 +6591,8 @@ void ScrInitMenu(RPCParameters *rpcParams)
 
 	bsData.Read(byteMenuID);
 	bsData.Read(bColumns);
-	bsData.Read(cText, MAX_MENU_LINE);
+	if(!bsData.Read(cText, MAX_MENU_LINE)) return;
+	cText[MAX_MENU_LINE - 1] = '\0';
 	bsData.Read(fX);
 	bsData.Read(fY);
 	bsData.Read(fCol1);
@@ -6309,28 +6605,32 @@ void ScrInitMenu(RPCParameters *rpcParams)
 	strcpy(GTAMenu.szTitle, cText);
 
 	BYTE byteColCount;
-	bsData.Read(cText, MAX_MENU_LINE);
+	if(!bsData.Read(cText, MAX_MENU_LINE)) return;
+	cText[MAX_MENU_LINE - 1] = '\0';
 	Log("[MENU] %s", cText);
 	strcpy(GTAMenu.szSeparator, cText);
 
-	bsData.Read(byteColCount);
+	if(!bsData.Read(byteColCount) || byteColCount > MAX_MENU_ITEMS) return;
 	GTAMenu.byteColCount = byteColCount;
 	for (BYTE i = 0; i < byteColCount; i++)
 	{
-		bsData.Read(cText, MAX_MENU_LINE);
+		if(!bsData.Read(cText, MAX_MENU_LINE)) return;
+		cText[MAX_MENU_LINE - 1] = '\0';
 		Log("[MENU:%d] %s", i, cText);
 		strcpy(GTAMenu.szColumnContent[i], cText);
 	}
 
 	if (bColumns)
 	{
-		bsData.Read(cText, MAX_MENU_LINE);
+		if(!bsData.Read(cText, MAX_MENU_LINE)) return;
+		cText[MAX_MENU_LINE - 1] = '\0';
 		//Log("4: %s", cText);
 
-		bsData.Read(byteColCount);
+		if(!bsData.Read(byteColCount) || byteColCount > MAX_MENU_ITEMS) return;
 		for (BYTE i = 0; i < byteColCount; i++)
 		{
-			bsData.Read(cText, MAX_MENU_LINE);
+			if(!bsData.Read(cText, MAX_MENU_LINE)) return;
+			cText[MAX_MENU_LINE - 1] = '\0';
 			//Log("5: %d %s", i, cText);
 		}
 	}
@@ -6671,6 +6971,11 @@ void ScrDialogBox(RPCParameters *rpcParams)
 		sampDialog.iIsActive = 0;
 		return;
 	}
+
+	// Bekleyen /stats cevabi (ACC probe): govdeyi bir kez dokum - format daha
+	// sonra kesin parse ile doldurulacak. Sadece bizim sordugumuz isim icin.
+	if(!g_accPendingName.empty() && GetTickCount() - g_accPendingAt < ACC_PROBE_TIMEOUT_MS)
+		Log("[ACCDBG] isim='%s' baslik='%s' govde=%.300s", g_accPendingName.c_str(), sampDialog.szTitle, szDlgInfo);
 
 	// --- GLOBAL AUTOCLOSE ---
 	// Acik kalmasi zorunlu diyaloglar disindakileri otomatik kapat (ekranda birikmesin).
@@ -7242,16 +7547,7 @@ void ScrShowTextDraw(RPCParameters *rpcParams)
 	// server-side kalkar; 60 sn beklemeye gerek yok). Scan/harvest state korunur;
 	// yeniden spawn'da kalinan adimdan devam edilir. Ayni mute penceresindeki tekrar
 	// textdraw'lar yeniden tetiklemesin diye bayrak ile bir kez.
-	if((g_zoneScanIdx >= 0 || g_ghpActive || g_gmPhase != 0) && strstr(cText, "MUTED") && !g_muteReconnectPending && iSpawned)
-	{
-		g_muteReconnectPending = true;
-		if(g_gmPhase != 0){
-			Log("[GM] Mute - gmembers harvest yeniden baslatilacak (reconnect sonrasi).");
-			g_gmPhase = 1; g_gmCount = 0; g_gmPage = 0; g_gmAstatsIdx = 0; g_gmAstatsWaiting = false; g_gmGvipsWaiting = false; g_gmSendDone = false;
-		}
-		Log("[MUTE] Komut mutesi yakalandi (%s) - hemen yeniden baglanilip islem surdurulecek.", cText);
-		resetPools(1, 0); // aninda reconnect; cmd mute reconnect ile kalkar
-	}
+	TriggerMuteReconnect(cText, "textdraw");
 
 	if(TextDrawTransmit.byteSelectable)
 		Log("[SELECTABLE-TEXTDRAW] ID: %d, Text: %s.", wTextID, cText);
@@ -7436,41 +7732,43 @@ void ScrSetWarGroup(RPCParameters *rpcParams)
 // Burada ayni Y'deki textdraw'lar X'e gore siralanip satir birlestirilir;
 // renklerine gore iki takima ayrilir ve "Name Kills Assists Deaths Dmg" baslikli
 // box halinde duzenlenir.
-void FinalizeKillList()
+static void WaitForKillListRows()
 {
-	if(g_zwKillTdCount == 0)
+	// Bos finalize KAPTaji oldurmez: gercek skorboard son 2 sn + bitis
+	// textdraw'larinda gelir (bot o an disarida olabilir). Pencere yenilenir,
+	// KillListSent YOK - sonraki toplama devam eder. Eski davranis bos
+	// finalize'de sent=true yapip kaptaji tum savas boyunca kilitliyordu
+	// ("gz sonucl.txt yazilmadi" vakasi).
+	g_zwCaptureStart = GetTickCount();
+	DWORD dwEmptyNow = GetTickCount();
+	if(g_zwEmptyFinalizeSince == 0)
+		g_zwEmptyFinalizeSince = dwEmptyNow;
+	if(dwEmptyNow - g_zwEmptyFinalizeSince < 30000)
 	{
-		// Bos finalize KAPTaji oldurmez: gercek skorboard son 2 sn + bitis
-		// textdraw'larinda gelir (bot o an disarida olabilir). Pencere yenilenir,
-		// KillListSent YOK - sonraki toplama devam eder. Eski davranis bos
-		// finalize'de sent=true yapip kaptaji tum savas boyunca kilitliyordu
-		// ("gz sonucl.txt yazilmadi" vakasi).
-		g_zwCaptureStart = GetTickCount();
-		DWORD dwEmptyNow = GetTickCount();
-		if(g_zwEmptyFinalizeSince == 0)
-			g_zwEmptyFinalizeSince = dwEmptyNow;
-		if(dwEmptyNow - g_zwEmptyFinalizeSince < 30000)
-		{
-			// 30 sn: bitis textdraw'lari gec gelebilir; 10 sn'de bir yeniden dene.
-			// FIX: eskiden g_zwFinalizeAt sifirlanmiyordu -> scheduler her frame
-			// tekrar cagirip saniyede ~20 log spam'i uretiyordu.
-			g_zwFinalizeAt = dwEmptyNow + 10000;
-			Log("[KILLLIST] Sonuc metni henuz bos, 10 sn sonra tekrar denenecek.");
-			return;
-		}
-		Log("[KILLLIST] Bitis textdraw'lari gelmedi, kill list bu savas icin atlaniliyor.");
-		g_zwEmptyFinalizeSince = 0;
-		g_zwCapturingKillList = false;
-		g_zwKillListSent = true;
-		g_zwFinalizeAt = 0;
-		if(g_zwReturnPending)
-		{
-			g_zwReturnPending = false;
-			Log("[KILLLIST] GZ'de kalindi, /fr ile freeroam'a donuluyor.");
-			sendServerCommand((char *)"/fr");
-		}
+		// 30 sn: bitis textdraw'lari gec gelebilir; 10 sn'de bir yeniden dene.
+		// FIX: eskiden g_zwFinalizeAt sifirlanmiyordu -> scheduler her frame
+		// tekrar cagirip saniyede ~20 log spam'i uretiyordu.
+		g_zwFinalizeAt = dwEmptyNow + 10000;
+		Log("[KILLLIST] Sonuc metni henuz bos, 10 sn sonra tekrar denenecek.");
 		return;
 	}
+	Log("[KILLLIST] Bitis textdraw'lari gelmedi, kill list bu savas icin atlaniliyor.");
+	g_zwEmptyFinalizeSince = 0;
+	g_zwCapturingKillList = false;
+	g_zwKillListSent = true;
+	g_zwFinalizeAt = 0;
+	if(g_zwReturnPending)
+	{
+		g_zwReturnPending = false;
+		Log("[KILLLIST] GZ'de kalindi, /fr ile freeroam'a donuluyor.");
+		sendServerCommand((char *)"/fr");
+	}
+	return;
+}
+
+void FinalizeKillList()
+{
+	if(g_zwKillTdCount == 0) { WaitForKillListRows(); return; }
 
 	// X'e gore sirala (kolon sirasi: ayni Y icinde soldan saga)
 	for(int a = 0; a < g_zwKillTdCount - 1; a++)
@@ -7624,6 +7922,12 @@ void FinalizeKillList()
 		}
 	}
 
+    if(strMine.empty() && strEnemy.empty() && strUnknown.empty()) {
+        Log("[KILLLIST] No player rows in %d textdraws; preserving previous result and waiting.", g_zwKillTdCount);
+        WaitForKillListRows();
+        return;
+    }
+
 	// Takim yonumuz: "vs" duyurusundaki konum (sol=kirmizi, sag=mavi) en guvenilir;
 	// bilinmiyorsa renk fallback'i (mavi 0x0000FF). bWeAreBlue=true ise biz sag grup.
 	bool bWeAreBlue = g_zwWeAreBlueKnown ? g_zwWeAreBlue : ((g_zwMyColor & 0xFFFFFF) == 0x0000FF);
@@ -7680,18 +7984,8 @@ void FinalizeKillList()
 		strRedRows = strEnemy; iRedK = g_zwEnemyK; iRedA = g_zwEnemyA; iRedD = g_zwEnemyD; iRedDmg = g_zwEnemyDmg;
 		strBlueRows = strMine; iBlueK = g_zwMineK; iBlueA = g_zwMineA; iBlueD = g_zwMineD; iBlueDmg = g_zwMineDmg;
 	}
-	{
-		char szB[512];
-		const char *dash = "--------------------------------------"; // 38 karakter: DMG sutununa kadar
-		sprintf_s(szB, sizeof(szB), "%-16s %4s %4s %4s %6s\n%s\n%s\n%s\nTotal            %4d %4d %4d %6d",
-			"Name", "K", "A", "D", "DMG", dash,
-			strRedRows.empty() ? "(bos)" : strRedRows.c_str(), dash, iRedK, iRedA, iRedD, iRedDmg);
-		strRedBox = szB;
-		sprintf_s(szB, sizeof(szB), "%-16s %4s %4s %4s %6s\n%s\n%s\n%s\nTotal            %4d %4d %4d %6d",
-			"Name", "K", "A", "D", "DMG", dash,
-			strBlueRows.empty() ? "(bos)" : strBlueRows.c_str(), dash, iBlueK, iBlueA, iBlueD, iBlueDmg);
-		strBlueBox = szB;
-	}
+    strRedBox = BuildKillListBox(strRedRows, iRedK, iRedA, iRedD, iRedDmg);
+    strBlueBox = BuildKillListBox(strBlueRows, iBlueK, iBlueA, iBlueD, iBlueDmg);
 	// E1 gibi eski tek-metin ciktisi da korunur (dosya / debug)
 	std::string strOut;
 	if(!szHeader[0]) sprintf_s(szHeader, sizeof(szHeader), "%-16s %4s %4s %4s %6s", "Name", "K", "A", "D", "DMG");
@@ -7853,6 +8147,32 @@ static bool QueryBackendPlayerRow(int iPid, char *szName, size_t nNameLen, doubl
 	catch(...) { return false; }
 }
 // ?pl yedegi: DB satirini bellege al (cevap kodu aynen calissin).
+// Hesap ID (/stats'in gosterdigi numara) -> oyuncu adi. players.id BAGLANTI slot
+// ID'sidir (her reconnect'te degisir), hesap ID ayri kolonda durur.
+static bool QueryBackendPlayerRowByAccount(int iAcc, char *szName, size_t nNameLen, int *pAgeSec)
+{
+	if(iAcc <= 0) return false;
+	if(szName && nNameLen > 0) szName[0] = 0;
+	if(!g_isEngineActive || g_sessionToken.empty()) return false;
+	try
+	{
+		httplib::Client cli(g_szBackendBase);
+		cli.set_connection_timeout(4);
+		char szUrl[64];
+		sprintf_s(szUrl, sizeof(szUrl), "/api/player/cache?accountId=%d", iAcc);
+		auto res = cli.Get(szUrl);
+		if(!res || res->status != 200) return false;
+		json j = json::parse(res->body);
+		if(!j.value("success", false) || !j.contains("rows") || !j["rows"].is_array() || j["rows"].empty()) return false;
+		json r = j["rows"][0];
+		std::string sN = r.value("name", "");
+		if(sN.empty()) return false;
+		if(szName && nNameLen > 0) strncpy_s(szName, nNameLen, sN.c_str(), _TRUNCATE);
+		if(pAgeSec) { *pAgeSec = 999999; if(r.contains("ageSec") && r["ageSec"].is_number()) *pAgeSec = (int)r["ageSec"].get<double>(); }
+		return true;
+	}
+	catch(...) { return false; }
+}
 static bool PlEnsureFromDb(int iPid)
 {
 	char szN[64]; double dL; int iF, iP;
@@ -7976,7 +8296,8 @@ void ProcessZoneWarAutoJoin()
 	//     (Saldiri yapilan gruptan kimse gz2'ye katilmazsa savas ~1 dk icinde biter ve
 	//      zone sahibi olunur; kontrol girisii sava-sin hala surdugunu ogrenir.)
 	//  2) 00:02'de kill-list girisii - iceride kal, kill list textdraw'larini topla, bitince Discord'a at.
-	if(g_inZoneWar && !g_zwAutoJoinSent)
+	// Savas-bitmeden soru beklenirken 00:02 GZ girisi DURUR (sniper pozisyonunda beklenir).
+	if(g_inZoneWar && !g_zwAutoJoinSent && !ZtkChainAskFresh())
 	{
 		int iLeft = -1;
 		if(g_warTimerTick != 0 && g_warRemainingSec > 0)
@@ -7990,7 +8311,7 @@ void ProcessZoneWarAutoJoin()
 
 		// 1) 09:02 kontrol girisii (bir kez): timer 09:02'ye indi-sinde GZ'ye gir,
 		//    sava-s aktifse timer'ý da tazeler; 2 sn sonra /fr ile geri don.
-		if(!g_zwCheckJoinSent && !g_zwReturnPending)
+		if(!g_zwCheckJoinSent && !g_zwReturnPending && !g_ztkActive) // zsnip aciksa kontrol girisi yok
 		{
 			if(iLeft >= 0 && iLeft <= 9 * 60 + 2)
 			{
@@ -8254,6 +8575,42 @@ static int CollectGroupZones(const char *szGroupName, int *outZones, int maxZone
 
 // ZSNIP: bu zone hedef grubun zone listesinde mi? (hedef zonede baska grubun
 // savasi surerken takip icin - sadece ilk zone degil, grubun tum zone'lari)
+// Savas-bitmeden zincir sorusu: saldirimiz surerken bitime ~35 sn kala bir kez
+// sorulur (?yes). Cevap beklenirken (30 sn fuse) 00:02 GZ girisi DURUR (sniper
+// pozisyonunda beklenir); fuse dolarsa soru iptal olur, GZ girisi devam eder.
+static int ZtkWarLeftSec()
+{
+	DWORD dwNow = GetTickCount();
+	if(g_warTimerTick != 0 && g_warRemainingSec > 0)
+	{
+		int iLeft = g_warRemainingSec - (int)((dwNow - g_warTimerTick) / 1000);
+		if(iLeft < 0 && g_zoneWarStartTick != 0)
+			iLeft = (int)((g_zoneWarStartTick + ZONE_WAR_TOTAL_MS - dwNow) / 1000);
+		return iLeft;
+	}
+	if(g_zoneWarStartTick != 0)
+		return (int)((ZONE_WAR_TOTAL_MS - (dwNow - g_zoneWarStartTick)) / 1000);
+	return -1;
+}
+static bool ZtkChainAskFresh()
+{
+	return g_ztkChainAsk && g_ztkActive && GetTickCount() - g_ztkChainAskAt <= 30000;
+}
+static void ZtkMaybeAskChain()
+{
+	if(g_ztkChainAsked || ZtkChainAskFresh() || g_ztkChainWant) return;
+	if(!(g_snipZoneCount > 0 && g_snipZoneIdx + 1 < g_snipZoneCount)) return;
+	int iLeft = ZtkWarLeftSec();
+	if(iLeft < 0 || iLeft > 35) return; // bitime ~35 sn kala tek soru
+	g_ztkChainAsked = true;
+	g_ztkChainAsk = true;
+	g_ztkChainAskAt = GetTickCount();
+	Log("[ZSNIP] Savas-bitmeden zincir sorusu: zone #%d (bitime %d sn).", g_snipZones[g_snipZoneIdx + 1], iLeft);
+	g_bridgeSuppressEcho++;
+	sendChat((char *)LM("!Diger zone'a da saldirayim mi? (?yes - 30 sn)",
+		"!Attack the next zone too? (?yes - 30 sec)"));
+}
+
 static bool IsSniperTargetZone(int zid)
 {
 	if(!g_ztkActive) return false;
@@ -8267,13 +8624,26 @@ static bool IsSniperTargetZone(int zid)
 void ProcessZtkTick()
 {
 	ProcessAlogAstatsQueue();
+	// Savas-bitmeden soru fusesu (30 sn): cevapsizsa iptal, GZ girisi devam eder.
+	if(g_ztkChainAsk && GetTickCount() - g_ztkChainAskAt > 30000)
+	{
+		g_ztkChainAsk = false;
+		g_ztkChainWant = false;
+		Log("[ZSNIP] Savas-bitmeden soru cevapsiz (30 sn), iptal.");
+		if(g_ztkActive)
+		{
+			g_bridgeSuppressEcho++;
+			sendChat((char *)LM("!Sure doldu, soru iptal - son saniye GZ girisine devam.",
+				"!Timed out, question cancelled - resuming last-seconds GZ entry."));
+		}
+	}
 	if(!g_ztkActive) return;
 
 	// Faz 2: /gz gonderildi, kendi savasimizin sonucu bekleniyor (won/lost game text
 	// veya chat war-end). Sonuc gelince zincir kararini ver.
 	if(g_ztkAttackPending)
 	{
-		if(g_inZoneWar) { g_ztkWarSeen = true; return; } // savasimiz suruyor
+		if(g_inZoneWar) { g_ztkWarSeen = true; ZtkMaybeAskChain(); return; } // savasimiz suruyor
 		if(!g_ztkWarSeen)
 		{
 			// /gz sonrasi savas hic baslamadi: 20 sn icinde war mesaji gelmezse basarisiz.
@@ -8306,11 +8676,30 @@ void ProcessZtkTick()
 			sendChat((char *)LM("!Zone kazanildi!", "!Zone captured!"));
 		else
 			sendChat((char *)LM("!Zone alinamadi...", "!Zone could not be captured..."));
+		// Savas-bitmeden ?yes gelmisti: beklemeden siradakine gec (?zgo mantigi).
+		if(g_ztkChainWant && g_snipZoneCount > 0 && g_snipZoneIdx + 1 < g_snipZoneCount)
+		{
+			g_ztkChainWant = false;
+			g_ztkChainAsk = false;
+			g_snipZoneIdx++;
+			int iNext = g_snipZones[g_snipZoneIdx];
+			PauseZoneScanForSnip();
+			g_ztkActive = true;
+			ZtkGotoZone(iNext);
+			Log("[ZSNIP] Onceden ?yes vardi, zone #%d'e gecildi.", iNext);
+			g_bridgeSuppressEcho++;
+			char szMsgNx[128];
+			sprintf_s(szMsgNx, sizeof(szMsgNx),
+				LM("!Savas bitti, zone #%d'e gidiliyor...", "!War over, going to zone #%d..."), iNext);
+			sendChat(szMsgNx);
+			return;
+		}
 		// Zincir: daha fazla zone varsa kullaniciya sor (uL.Hold gibi)
 		if(g_snipZoneCount > 0 && g_snipZoneIdx + 1 < g_snipZoneCount)
 		{
 			g_snipZoneIdx++;
 			g_ztkAskNext = true;
+			g_ztkChainAsk = false; // savas-bitmeden soru post-soruya donustu
 			Log("[ZSNIP] ?yes ile zone #%d'e devam edilecek.", g_snipZones[g_snipZoneIdx]);
 			g_bridgeSuppressEcho++;
 			sendChat((char *)LM("!Diger zone'a da saldirayim mi? (?yes)",

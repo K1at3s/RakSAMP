@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const db = require('../db');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
+const { isOnline, replyOffline } = require('../utils/clientPresence');
 const { hasGroupPermission, getLinkedHwid } = require('../utils/permissions');
 
 // /zscan [on|off|sn] — otomatik zone tarama anahtari (oyun ici ?zscan ile ayni).
@@ -51,6 +52,7 @@ module.exports = {
         }
 
         const hwid = getLinkedHwid(guild);
+        if (hwid && !isOnline(hwid)) return replyOffline(interaction, guild);
         if (!hwid) {
             return interaction.reply({ content: isTr ? '❌ Bağlı RakSAMP istemcisi yok.' : ' No linked RakSAMP client.', ephemeral: true });
         }

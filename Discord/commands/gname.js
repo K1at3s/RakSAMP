@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
+const { isOnline, replyOffline } = require('../utils/clientPresence');
 const { hasGroupPermission, getLinkedHwid } = require('../utils/permissions');
 
 // /gname — grup adini yeniden ogrenmeye zorlar (oyun ici ?gname ile ayni).
@@ -19,6 +20,7 @@ module.exports = {
         }
         const isTr = guild ? guild.lang === 'tr' : true;
         const hwid = getLinkedHwid(guild);
+        if (hwid && !isOnline(hwid)) return replyOffline(interaction, guild);
         if (!hwid) {
             return interaction.reply({ content: isTr ? '❌ Bağlı RakSAMP istemcisi yok.' : '❌ No linked RakSAMP client.', ephemeral: true });
         }

@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const Guild = require('../models').Guild;
 const { queueCommand } = require('../utils/commandOutbox');
+const { isOnline, replyOffline } = require('../utils/clientPresence');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -24,6 +25,7 @@ module.exports = {
         }
 
         const hwid = guild.linkedHwids[0];
+        if (!isOnline(hwid)) return replyOffline(interaction, guild);
         queueCommand(hwid, { type: 'command', cmd, author: interaction.user.username });
 
         await interaction.reply(`✅ Komut kuyruga alindi. **\`${hwid}\`** istemcisine iletiliyor: \`${cmd.slice(0, 150)}\``);

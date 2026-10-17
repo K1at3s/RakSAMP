@@ -20,6 +20,7 @@ extern std::string g_groleRole;
 extern int  g_grolePhase;
 extern unsigned long g_groleStartTime;
 extern int  g_grolePage;
+extern char g_grAnnounce[64]; // netrpc.cpp otomasyon duyuru mandali
 extern bool g_grankActive;
 extern std::string g_grankTarget;
 extern std::string g_grankRank;
@@ -303,6 +304,7 @@ static double ExtractNumberNear(const char *szText, const char *key) {
 int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo) {
 #ifdef RAKSAMP_CLIENT
     if (!g_isEngineActive || g_sessionToken.empty()) return 0;
+    if(HandleGroupLeaveDialog(wDialogID, szTitle, szInfo)) return 1;
 
     // -------------------------------------------------------------
     // 1. G??R???S (LOGIN) EKRANI KORUMASI
@@ -1084,6 +1086,7 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
         if (g_groleStartTime != 0 && GetTickCount() - g_groleStartTime > 45000) {
             g_groleActive = false;
             g_grolePhase = 0;
+            FinishDiscordGroupCommand("grole", "timeout", "game_timeout");
             Log("[GROLE] Zaman asimi (45sn), otomasyon iptal.");
             return 0;
         }
@@ -1186,7 +1189,12 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                     pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
                     return 1;
                 }
+                FinishDiscordGroupCommand("grole", "failed", "member_not_found");
                 Log("[GROLE] Hedef '%s' bulunamadi, iptal.", g_groleTarget.c_str());
+                char szNFG[96]; sprintf_s(szNFG, sizeof(szNFG), "!Uye bulunamadi: %.60s", g_groleTarget.c_str());
+                g_bridgeSuppressEcho++;
+                sendChat(szNFG);
+                g_grAnnounce[0] = 0;
                 bs.Write((uint8_t)1);
                 bs.Write((uint16_t)0xFFFF);
                 bs.Write((uint8_t)0);
@@ -1244,6 +1252,7 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                     g_grRoleDblPending = true;
                     return 1;
                 }
+                FinishDiscordGroupCommand("grole", "failed", "option_not_found");
                 Log("[GROLE] Rol '%s' bulunamadi, iptal.", g_groleRole.c_str());
                 bs.Write((uint8_t)1);
                 bs.Write((uint16_t)0xFFFF);
@@ -1260,6 +1269,7 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
         if (g_grankStartTime != 0 && GetTickCount() - g_grankStartTime > 45000) {
             g_grankActive = false;
             g_grankPhase = 0;
+            FinishDiscordGroupCommand("grank", "timeout", "game_timeout");
             Log("[GRANK] Zaman asimi (45sn), otomasyon iptal.");
             return 0;
         }
@@ -1342,7 +1352,12 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                     pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
                     return 1;
                 }
+                FinishDiscordGroupCommand("grank", "failed", "member_not_found");
                 Log("[GRANK] Hedef '%s' bulunamadi, iptal.", g_grankTarget.c_str());
+                char szNFK[96]; sprintf_s(szNFK, sizeof(szNFK), "!Uye bulunamadi: %.60s", g_grankTarget.c_str());
+                g_bridgeSuppressEcho++;
+                sendChat(szNFK);
+                g_grAnnounce[0] = 0;
                 bs.Write((uint8_t)1);
                 bs.Write((uint16_t)0xFFFF);
                 bs.Write((uint8_t)0);
@@ -1409,6 +1424,7 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                     g_grRoleDblPending = true;
                     return 1;
                 }
+                FinishDiscordGroupCommand("grank", "failed", "option_not_found");
                 Log("[GRANK] Rank '%s' bulunamadi, iptal.", g_grankRank.c_str());
                 bs.Write((uint8_t)1);
                 bs.Write((uint16_t)0xFFFF);
@@ -1428,6 +1444,7 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
         if (g_gkickStartTime != 0 && GetTickCount() - g_gkickStartTime > 45000) {
             g_gkickActive = false;
             g_gkickPhase = 0;
+            FinishDiscordGroupCommand("gkick", "timeout", "game_timeout");
             Log("[GKICK] Zaman asimi (45sn), otomasyon iptal.");
             return 0;
         }
@@ -1512,6 +1529,7 @@ int HandleCapturedDialog(int wDialogID, const char* szTitle, const char* szInfo)
                     pRakClient->RPC(&RPC_DialogResponse, &bs, HIGH_PRIORITY, RELIABLE_ORDERED, 0, FALSE, UNASSIGNED_NETWORK_ID, NULL);
                     return 1;
                 }
+                FinishDiscordGroupCommand("gkick", "failed", "member_not_found");
                 Log("[GKICK] Hedef '%s' bulunamadi, iptal.", g_gkickTarget.c_str());
                 bs.Write((uint8_t)1);
                 bs.Write((uint16_t)0xFFFF);

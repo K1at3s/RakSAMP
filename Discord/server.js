@@ -10,6 +10,8 @@ const Guild = require('./models').Guild;
 const guildUtils = require('./utils/guildUtils');
 const { hasGroupPermission } = require('./utils/permissions');
 const socketStore = require('./utils/socketStore');
+const { markOnline, isOnline, shouldWarn } = require('./utils/clientPresence');
+const commandTracker = require('./utils/commandTracker');
 const { loadCommands, registerCommands, registerForGuild, handleInteraction } = require('./handlers/commandHandler');
 const db = require('./db');
 
@@ -30,7 +32,10 @@ async function hasGrolePermission(interaction){
     try{
         const guild = await Guild.findOne({ guildId: interaction.guildId });
         return hasGroupPermission(interaction, guild);
-    }catch{ return true; }
+    }catch(err){
+        console.error('Grup yetki kontrolu basarisiz:', err);
+        return false;
+    }
 }
 
 // --- EXPRESS & SOCKET.IO SETUP ---
@@ -100,15 +105,9 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.update({ content: L(guild, '❌ Bağlı RakSAMP istemcisi yok.', '❌ No linked RakSAMP client.'), embeds: [], components: [] });
         }
         const hwid = guild.linkedHwids[0];
-        queueCommand(hwid, { type: 'grole', target: member, role, requesterId: interaction.id });
-        setPendingInteraction(interaction.id, interaction);
-        // 2 dk sonra otomatik kapat
-        setTimeout(() => { interaction.editReply({ content: L(guild, '✅ İşlem tamamlandı.', '✅ Done.'), embeds: [], components: [] }).catch(()=>{}); removePendingInteraction(interaction.id); }, 2*60*1000);
-        const embed = new EmbedBuilder()
-            .setTitle('✅ ' + L(guild, 'Gönderildi', 'Sent'))
-            .setDescription(L(guild, `\`/grole ${member} → ${role}\` oyuna iletildi — listede aranıp uygulanacak.`, `\`/grole ${member} → ${role}\` sent to the game — will be searched and applied.`))
-            .setColor(0x00FF00);
-        return interaction.update({ embeds: [embed], components: [] });
+        if (!isOnline(hwid)) return interaction.update({ content: L(guild, '❌ Client kapalı — bot oyunda değil.', '❌ Client offline — bot is not in game.'), embeds: [], components: [] });
+        removePendingInteraction(requesterId);
+        return commandTracker.submit(interaction, guild, hwid, { type: 'grole', target: member, role }, { component: true });
     }
     // Sayfali uye listesi butonlari (rate-limit dostu: tek edit ile sayfa degisir)
     if (interaction.isButton() && interaction.customId.startsWith('grole_page_')) {
@@ -178,14 +177,9 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.update({ content: L(guild, '❌ Bağlı RakSAMP istemcisi yok.', '❌ No linked RakSAMP client.'), embeds: [], components: [] });
         }
         const hwid = guild.linkedHwids[0];
-        queueCommand(hwid, { type: 'grank', target: member, rank, requesterId: interaction.id });
-        setPendingInteraction(interaction.id, interaction);
-        setTimeout(() => { interaction.editReply({ content: L(guild, '✅ İşlem tamamlandı.', '✅ Done.'), embeds: [], components: [] }).catch(()=>{}); removePendingInteraction(interaction.id); }, 2*60*1000);
-        const embed = new EmbedBuilder()
-            .setTitle('✅ ' + L(guild, 'Gönderildi', 'Sent'))
-            .setDescription(L(guild, `\`/grank ${member} → ${rank}\` oyuna iletildi.`, `\`/grank ${member} → ${rank}\` sent to the game.`))
-            .setColor(0x00FF00);
-        return interaction.update({ embeds: [embed], components: [] });
+        if (!isOnline(hwid)) return interaction.update({ content: L(guild, '❌ Client kapalı — bot oyunda değil.', '❌ Client offline — bot is not in game.'), embeds: [], components: [] });
+        removePendingInteraction(requesterId);
+        return commandTracker.submit(interaction, guild, hwid, { type: 'grank', target: member, rank }, { component: true });
     }
     // /gkick interaktif: uye secimi -> sebep modal
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('gkick_member_select:')) {
@@ -218,20 +212,11 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ content: L(guild, '❌ Bağlı RakSAMP istemcisi yok.', '❌ No linked RakSAMP client.'), ephemeral: true });
         }
         const hwid = guild.linkedHwids[0];
-        queueCommand(hwid, { type: 'gkick', target: member, reason, requesterId: interaction.id });
-        setPendingInteraction(interaction.id, interaction);
-        // Secim menusunu kapat (orijinal pending uzerinden)
-        try {
-            const orig = getPendingInteraction(requesterId);
-            if (orig) await orig.editReply({ content: L(guild, `✅ \`${member}\` seçildi, kick iletiliyor...`, `✅ \`${member}\` selected, kicking...`), embeds: [], components: [] }).catch(()=>{});
-            removePendingInteraction(requesterId);
-        } catch {}
-        setTimeout(() => { interaction.editReply({ content: L(guild, '✅ İşlem tamamlandı.', '✅ Done.'), embeds: [], components: [] }).catch(()=>{}); removePendingInteraction(interaction.id); }, 2*60*1000);
-        const embed = new EmbedBuilder()
-            .setTitle('✅ ' + L(guild, 'Gönderildi', 'Sent'))
-            .setDescription(L(guild, `\`/gkick ${member}\` oyuna iletildi${reason ? ` (sebep: ${reason})` : ' (sebepsiz)'}.`, `\`/gkick ${member}\` sent to the game${reason ? ` (reason: ${reason})` : ' (no reason)'}.`))
-            .setColor(0x00FF00);
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        if (!isOnline(hwid)) return interaction.reply({ content: L(guild, '❌ Client kapalı — bot oyunda değil.', '❌ Client offline — bot is not in game.'), ephemeral: true });
+        const original = getPendingInteraction(requesterId);
+        removePendingInteraction(requesterId);
+        if (original) await original.editReply({ content: L(guild, 'Üye seçildi; işlem durumu yeni yanıtta gösteriliyor.', 'Member selected; see the new reply for action status.'), embeds: [], components: [] }).catch(() => {});
+        return commandTracker.submit(interaction, guild, hwid, { type: 'gkick', target: member, reason });
     }
     // Sayfali kick uye listesi butonlari
     if (interaction.isButton() && interaction.customId.startsWith('gkick_page_')) {
@@ -285,6 +270,8 @@ client.login(config.DISCORD_BOT_TOKEN).catch(console.error);
 
 // hwid -> oyun içine iletilecek bekleyen Discord mesajları (geçici, bellekte)
 const groupChatOutbox = new Map();
+const { unlinkDevice, setChatCleanup } = require('./utils/unlinkDevice');
+setChatCleanup(hwid => groupChatOutbox.delete(hwid));
 
 function queueOutbox(hwid, payload) {
     if (!hwid) return;
@@ -848,9 +835,11 @@ app.post('/api/grouplog', async (req, res) => {
     }
 
     await db.execute(
-        `INSERT INTO group_logs (actor_name, actor_acc, target_name, target_acc, old_rank, new_rank)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO group_logs (hwid, group_name, actor_name, actor_acc, target_name, target_acc, old_rank, new_rank)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
+            String(body.hwid || '').trim().slice(0, 64),
+            String(body.group || '').trim().slice(0, 96),
             String(body.actorName || '').trim().slice(0, 64),
             body.actorAcc ? Number(body.actorAcc) : null,
             String(body.targetName || '').trim().slice(0, 64),
@@ -1103,14 +1092,32 @@ const { getPendingInteraction, removePendingInteraction } = require('./utils/pen
 // Komut bekleme kuyruğunu oyundan çek (polling)
 app.get('/api/command/poll', async (req, res) => {
     const hwid = String(req.query.hwid || '');
+    if (hwid) markOnline(hwid);
     const commands = drainCommands(hwid);
+    for (const command of commands) {
+        if (command.tracked) commandTracker.update(command.requesterId, hwid, 'delivered');
+    }
     return res.json({ commands });
+});
+
+// Client acknowledgements and game-confirmed results belong to the authenticated HWID.
+app.post('/api/command/status', (req, res) => {
+    const { sessionToken, requesterId, status, reason } = req.body || {};
+    let hwid;
+    try { hwid = decryptSession(sessionToken).hwid; }
+    catch { return res.status(401).json({ success: false }); }
+    if (!['processing', 'succeeded', 'failed', 'timeout'].includes(status) || typeof requesterId !== 'string') {
+        return res.status(400).json({ success: false });
+    }
+    const accepted = commandTracker.update(requesterId, hwid, status, typeof reason === 'string' ? reason : '');
+    return res.json({ success: accepted });
 });
 
 // --- /api/grole: Discord'dan grup rol degisikligi (paginated /grole otomasyonu) ---
 app.post('/api/grole', async (req, res) => {
     const { hwid, target, role, requesterId } = req.body || {};
     if (!hwid || !target || !role) return res.status(400).json({ error: 'hwid, target, role gerekli' });
+    if (!isOnline(hwid)) return res.json({ success: false, message: 'Client kapalı — bot oyunda değil.' });
     const roleMap = { mem: 'Member', co: 'Co-Leader', memb: 'Member' };
     const fullRole = roleMap[role] || role;
     queueCommand(hwid, { type: 'grole', target, role: fullRole, requesterId: requesterId || '' });
@@ -1122,6 +1129,8 @@ app.post('/api/grole', async (req, res) => {
 app.post('/api/grank', async (req, res) => {
     const { hwid, target, rank, requesterId } = req.body || {};
     if (!hwid || !target || !rank) return res.status(400).json({ error: 'hwid, target, rank gerekli' });
+    if (!hwid || !target || !rank) return res.status(400).json({ error: 'hwid, target, rank gerekli' });
+    if (!isOnline(hwid)) return res.json({ success: false, message: 'Client kapalı — bot oyunda değil.' });
     queueCommand(hwid, { type: 'grank', target, rank, requesterId: requesterId || '' });
     console.log(`🏷️ [GRANK] Kuyruğa alındı: ${target} -> ${rank} (hwid=${hwid.slice(0,8)})`);
     return res.json({ success: true });
@@ -1383,7 +1392,14 @@ client.on('messageCreate', async (message) => {
 
     console.log(`💬 DISCORD→OYUN (guild=${guild.guildId}): ${message.author.username}: ${text}`);
     const payload = { text, author: message.author.username };
-    for (const hwid of guild.linkedHwids || []) {
+    const lives = (guild.linkedHwids || []).filter(h => isOnline(h));
+    if (!lives.length) {
+        if (shouldWarn('bridge:' + guild.guildId)) {
+            try { await message.channel.send(guild.lang === 'tr' ? '❌ Client kapalı — bot oyunda değil, mesaj iletilemedi.' : '❌ Client offline — bot is not in game, message not delivered.'); } catch {}
+        }
+        return;
+    }
+    for (const hwid of lives) {
         queueOutbox(hwid, payload);
     }
 });
@@ -1455,6 +1471,7 @@ app.post('/api/lang/set', async (req, res) => {
 // RakSAMP istemcisi bekleyen Discord mesajlarını ve köprü durumunu çeker (polling)
 app.get('/api/groupchat/poll', async (req, res) => {
     const hwid = String(req.query.hwid || '');
+    if (hwid) markOnline(hwid);
     const guild = await guildUtils.getGuildByHwid(hwid);
     const enabled = guild ? !!guild.groupChatEnabled : false;
     const channelConfigured = guild ? !!guild.groupChatChannelId : false;
@@ -1476,6 +1493,21 @@ app.get('/api/groupchat/poll', async (req, res) => {
     // (guild.lang varsayılanı 'en' yoksa ezerdi).
     if (guild) out.lang = guild.lang;
     return res.json(out);
+});
+
+// Only an authenticated client may detach its own Discord links.
+app.post('/api/unlink', async (req, res) => {
+    let hwid;
+    try { hwid = decryptSession(req.body?.sessionToken).hwid; }
+    catch { return res.status(401).json({ success: false }); }
+    if (!hwid) return res.status(401).json({ success: false });
+    try {
+        const result = await unlinkDevice(hwid);
+        return res.json({ success: true, ...result });
+    } catch (err) {
+        console.error('UNLINK:', err.message);
+        return res.status(500).json({ success: false });
+    }
 });
 
 // Oyun içi ?guildid: bu HWID'i Discord sunucusuna bağlar (linkedHwids).
@@ -1505,14 +1537,17 @@ app.post('/api/player/cache', async (req, res) => {
     if (!Array.isArray(players)) return res.status(400).json({ success: false, message: "players bekleniyor" });
     const rows = players
         .filter(p => Number.isInteger(p.id) && p.id >= 0 && p.id < 1000)
-        .map(p => [p.id, String(p.name || '').slice(0, 64), Number(p.packetloss) || 0, Number(p.fps) || 0, Number(p.ping) || 0, new Date()]);
+        // account_id: /stats'in gosterdigi hesap ID. 'id' BAGLANTI slot ID'sidir
+        // (her reconnect'te degisir) - ikisi karistirilip yanlis oyuncu donuyordu.
+        .map(p => [p.id, String(p.name || '').slice(0, 64), Number(p.packetloss) || 0, Number(p.fps) || 0, Number(p.ping) || 0,
+            Number.isInteger(p.accountId) && p.accountId > 0 && p.accountId < 1000000 ? p.accountId : null, new Date()]);
     if (!rows.length) return res.json({ success: true, count: 0 });
     try {
         // Cache dosyası tek doğru kaynak olduğundan tablo her push'ta sıfırlanıp
         // yeniden yazılır (eski/çıkmış oyuncu verisi burada kalmaz).
         await db.execute('DELETE FROM players');
         await db.query(
-            `INSERT INTO players (id, name, packetloss, fps, ping, updated_at) VALUES ?`,
+            `INSERT INTO players (id, name, packetloss, fps, ping, account_id, updated_at) VALUES ?`,
             [rows]
         );
         console.log(`🎮 PLAYER-CACHE: ${rows.length} oyuncu DB'ye yazildi`);
@@ -1527,11 +1562,14 @@ app.post('/api/player/cache', async (req, res) => {
 // tek kaynak DB'deki players tablosu).
 app.get('/api/player/cache', async (req, res) => {
     const id = req.query.id !== undefined ? Number(req.query.id) : NaN;
+    const acc = req.query.accountId !== undefined ? Number(req.query.accountId) : NaN;
     const name = String(req.query.name || '').trim().slice(0, 64);
     try {
         let rows;
-        if (Number.isInteger(id) && id >= 0 && id < 1000) {
-            rows = await db.execute('SELECT id, name, packetloss, fps, ping, updated_at, TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS ageSec FROM players WHERE id = ? LIMIT 2', [id]);
+        if (Number.isInteger(acc) && acc > 0) {
+            rows = await db.execute('SELECT id, name, account_id, packetloss, fps, ping, updated_at, TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS ageSec FROM players WHERE account_id = ? LIMIT 2', [acc]);
+        } else if (Number.isInteger(id) && id >= 0 && id < 1000) {
+            rows = await db.execute('SELECT id, name, account_id, packetloss, fps, ping, updated_at, TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS ageSec FROM players WHERE id = ? LIMIT 2', [id]);
         } else if (name) {
             rows = await db.execute('SELECT id, name, packetloss, fps, ping, updated_at, TIMESTAMPDIFF(SECOND, updated_at, NOW()) AS ageSec FROM players WHERE LOWER(name) = LOWER(?) LIMIT 5', [name]);
         } else {

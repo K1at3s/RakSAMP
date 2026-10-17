@@ -7,6 +7,7 @@
 
 #include "httplib.h"
 #include "json.hpp"
+#include "GameChatPayload.h"
 
 // misc_funcs.cpp icerisinde tanimli (main.h bagimliligini onlemek icin local decl)
 void sendChat(char *szMessage);
@@ -15,7 +16,7 @@ void Log(char *fmt, ...);
 using json = nlohmann::json;
 
 // VDS Backend taban adresi (main.cpp handshake ile ayni kalmali)
-static const std::string g_backendBase = "http://127.0.0.1:3000";
+static const std::string g_backendBase = "http://127.0.0.1:3001";
 
 std::string g_myHWID = "";
 std::string g_sessionToken = "";
@@ -90,12 +91,24 @@ std::string GenerateSecureHWID() {
 }
 
 // 3. Sunucu Handshake
-bool PerformSecurityHandshake(const std::string& serverUrl) {
+bool PerformSecurityHandshake(const std::string& serverUrl, const char *nick) {
     if (IsDebuggerPresent()) {
         ExitProcess(0);
     }
 
     g_myHWID = GenerateSecureHWID();
+    // Ayni PC birden fazla bot (farkli grup): HWID sonuna bot nicki
+    // eklenir, her kopya backendde ayri kimlik olur (kuyruk/kanal karismaz).
+    if (nick && nick[0]) {
+        std::string s;
+        for (const char *q = nick; *q && s.size() < 16; q++) {
+            char c = *q;
+            if (c >= 'a' && c <= 'z') c -= 32;
+            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') s += c;
+        }
+        if (!s.empty()) { g_myHWID += "-"; g_myHWID += s; }
+    }
+    std::cout << "[HWID] " << g_myHWID << "\n";
 
     httplib::Client cli(serverUrl);
     cli.set_connection_timeout(5);
@@ -214,9 +227,12 @@ void ServerSetBotLang(bool turkish) {
     }
 }
 
+static bool s_unlinkPending = false;
+static DWORD s_unlinkRetryAt = 0;
 // ?guildid: bu HWID'i Discord sunucusuna baglar. Sonraki tum hwid tabanli
 // cagrilar (dil, grup chat, welcome...) o sunucuya cozulur.
 bool ServerSetGuildId(const char *guildId) {
+    if(s_unlinkPending) { Log("[UNLINK] Relink blocked until pending unlink completes."); return false; }
     if (!g_isEngineActive || g_sessionToken.empty() || !guildId || !guildId[0]) return false;
 
     httplib::Client cli(g_backendBase);
@@ -241,31 +257,57 @@ bool ServerSetGuildId(const char *guildId) {
     return false;
 }
 
+void ProcessDiscordUnlink() {
+    if(!s_unlinkPending || g_sessionToken.empty()) return;
+    const DWORD now = GetTickCount();
+    if(s_unlinkRetryAt && now - s_unlinkRetryAt < 5000) return;
+    s_unlinkRetryAt = now;
+    try {
+        httplib::Client cli(g_backendBase);
+        cli.set_connection_timeout(3);
+        cli.set_read_timeout(3);
+        json body = {{"sessionToken", g_sessionToken}};
+        auto res = cli.Post("/api/unlink", body.dump(), "application/json");
+        if(res && res->status == 200 && json::parse(res->body).value("success", false)) {
+            s_unlinkPending = false;
+            Log("[UNLINK] Discord link removed.");
+        } else Log("[UNLINK] Failed; retrying (HTTP %d).", res ? res->status : -1);
+    } catch(...) { Log("[UNLINK] Request failed; retrying."); }
+}
+void RequestDiscordUnlink(bool groupExit) {
+    s_unlinkPending = true;
+    s_unlinkRetryAt = 0;
+    g_groupChatEnabled = false;
+    g_myGroupId.clear();
+    if(groupExit) g_myGroupName.clear();
+    ProcessDiscordUnlink();
+}
+
 // 6. Oyun -> Discord: grup chat'inde ! ile ba�layan kendi mesaj�mizi ilet
-void SendGroupChatToDiscord(const char *text) {
+void SendGroupChatToDiscord(const char *text, const char *author) {
+    if(s_unlinkPending) return;
     if (!g_isEngineActive || g_sessionToken.empty()) return;
     if (text == NULL || text[0] == '\0') return;
 
-    httplib::Client cli(g_backendBase);
-    cli.set_connection_timeout(5);
-
-    json body = {
-        {"hwid", g_myHWID},
-        {"author", std::string(g_szNickName ? g_szNickName : "Oyuncu")},
-        {"text", text}
-    };
-
-    auto res = cli.Post("/api/groupchat", body.dump(), "application/json");
-    if (res && res->status == 200) {
-        try {
-            auto data = json::parse(res->body);
-            (void)data;
-        } catch (...) {}
+    try {
+        const json body = BuildGroupChatPayload(g_myHWID, author, text);
+        const std::string payload = body.dump();
+        httplib::Client cli(g_backendBase);
+        cli.set_connection_timeout(5);
+        cli.set_read_timeout(5);
+        auto res = cli.Post("/api/groupchat", payload, "application/json");
+        if(!res || res->status != 200)
+            Log("[GROUPCHAT] Discord delivery failed (HTTP %d), client remains running.", res ? res->status : -1);
+    } catch(const std::exception &error) {
+        Log("[GROUPCHAT] Discord delivery failed: %s", error.what());
+    } catch(...) {
+        Log("[GROUPCHAT] Discord delivery failed: unexpected error, client remains running.");
     }
 }
 
 // 7. Discord -> Oyun: bekleyen Discord mesajlarini cekip oyuna ilet (2 sn'de bir)
 void PollDiscordChat() {
+    if(s_unlinkPending) return;
     if (!g_isEngineActive || g_sessionToken.empty()) return;
 
     DWORD dwNow = GetTickCount();
@@ -546,13 +588,37 @@ void RefreshWelcomeState() {
 }
 
 // 12. Discord -> Oyun: /send ve /gstats komutlar�ni kuyruktan cekip oyunda calistir (2 sn'de bir)
+// Retry acknowledgements in order if the local backend is temporarily unavailable.
+static std::vector<json> s_commandStatusOutbox;
+static void FlushDiscordCommandStatuses() {
+    if(g_sessionToken.empty()) return;
+    while(!s_commandStatusOutbox.empty()) {
+        httplib::Client cli(g_backendBase);
+        cli.set_connection_timeout(2);
+        cli.set_read_timeout(2);
+        auto res = cli.Post("/api/command/status", s_commandStatusOutbox.front().dump(), "application/json");
+        if(!res || res->status >= 500) return;
+        s_commandStatusOutbox.erase(s_commandStatusOutbox.begin());
+    }
+}
+void SendDiscordCommandStatus(const char *requesterId, const char *status, const char *reason) {
+    if(!requesterId || !requesterId[0]) return;
+    if(s_commandStatusOutbox.size() >= 100) s_commandStatusOutbox.erase(s_commandStatusOutbox.begin());
+    s_commandStatusOutbox.push_back({{"sessionToken", g_sessionToken}, {"requesterId", requesterId},
+        {"status", status}, {"reason", reason ? reason : ""}});
+    FlushDiscordCommandStatuses();
+}
+
 void PollCommands() {
+    ProcessDiscordUnlink();
+    if(s_unlinkPending) return;
     if (!g_isEngineActive || g_sessionToken.empty()) return;
 
     DWORD dwNow = GetTickCount();
     static DWORD s_lastCommandPoll = 0;
     if (s_lastCommandPoll != 0 && (dwNow - s_lastCommandPoll) < 2000) return;
     s_lastCommandPoll = dwNow;
+    FlushDiscordCommandStatuses();
 
     httplib::Client cli(g_backendBase);
     cli.set_connection_timeout(3);
@@ -597,7 +663,8 @@ void PollCommands() {
                     }
                     if(!target.empty() && !role.empty()){
                         std::cout << "­sæñ [COMMAND] Discord'dan /grole otomasyonu: " << target << " -> " << role << "\n";
-                        StartGrole(target.c_str(), role.c_str());
+                        if(BeginDiscordGroupCommand("grole", requesterId.c_str(), target.c_str(), role.c_str()))
+                            StartGrole(target.c_str(), role.c_str(), requesterId.c_str());
                     } else if(!cmd.empty()){
                         std::cout << "­sæñ [COMMAND] Discord'dan /grole direk: " << cmd << "\n";
                         sendServerCommand((char *)cmd.c_str());
@@ -612,7 +679,8 @@ void PollCommands() {
                     }
                     if(!target.empty() && !rank.empty()){
                         std::cout << "­sÅÀ´©Å [COMMAND] Discord'dan /grank otomasyonu: " << target << " -> " << rank << "\n";
-                        StartGrank(target.c_str(), rank.c_str());
+                        if(BeginDiscordGroupCommand("grank", requesterId.c_str(), target.c_str(), rank.c_str()))
+                            StartGrank(target.c_str(), rank.c_str(), requesterId.c_str());
                     } else if(!cmd.empty()){
                         std::cout << "­sÅÀ´©Å [COMMAND] Discord'dan /grank direk: " << cmd << "\n";
                         sendServerCommand((char *)cmd.c_str());
@@ -628,7 +696,8 @@ void PollCommands() {
                         std::cout << "[COMMAND] Discord'dan /ginvite: " << target << "\n";
                         char szCmd[80]={0};
                         sprintf_s(szCmd, sizeof(szCmd), "/ginvite %s", target.c_str());
-                        sendServerCommand(szCmd);
+                        if(BeginDiscordGroupCommand("ginvite", requesterId.c_str(), target.c_str(), ""))
+                            sendServerCommand(szCmd);
                     } else if(!cmd.empty()){
                         sendServerCommand((char *)cmd.c_str());
                     }
@@ -643,7 +712,8 @@ void PollCommands() {
                     std::string reason = c.value("reason", "");
                     if(!target.empty()){
                         std::cout << "[COMMAND] Discord'dan /gkick otomasyonu: " << target << std::endl;
-                        StartGkick(target.c_str(), reason.c_str());
+                        if(BeginDiscordGroupCommand("gkick", requesterId.c_str(), target.c_str(), ""))
+                            StartGkick(target.c_str(), reason.c_str(), requesterId.c_str());
                     }
                 } else if (type == "pm") {
                     std::string target = c.value("target", "");
