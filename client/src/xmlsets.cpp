@@ -3,6 +3,7 @@
 */
 
 #include "main.h"
+#include "SettingsArguments.h"
 
 struct stSettings settings;
 TiXmlDocument xmlSettings;
@@ -78,22 +79,17 @@ int LoadSettings()
 			char *pszAddr = (char *)serverElement->GetText();
 			if(pszAddr)
 			{
-				int iPort;
-				char *pszAddrBak = pszAddr;
-
-				while(*pszAddrBak)
-				{
-					if(*pszAddrBak == ':')
-					{
-						*pszAddrBak = 0;
-						pszAddrBak++;
-						iPort = atoi(pszAddrBak);
-					}
-					pszAddrBak++;
-				}
-
-				strcpy(settings.server.szAddr, pszAddr);
-				settings.server.iPort = iPort;
+				// Parse a copy: TinyXML owns GetText(), and invalid ports must not connect.
+                const std::string endpoint(pszAddr);
+                const size_t colon = endpoint.rfind(':');
+                int port = 0;
+                if(colon == std::string::npos || colon == 0 ||
+                   !ParseServerPort(endpoint.substr(colon + 1), port)) {
+                    Log("Invalid server address/port in RakSAMPClient.xml (expected host:1-65535)");
+                    return 0;
+                }
+                CopySettingsArgument(settings.server.szAddr, endpoint.substr(0, colon));
+                settings.server.iPort = port;
 				strcpy(settings.server.szNickname, (char *)serverElement->Attribute("nickname"));
 				strcpy(settings.server.szPassword, (char *)serverElement->Attribute("password"));
 			}
@@ -208,36 +204,7 @@ int LoadSettings()
 
 	xmlSettings.Clear();
 
-	PCHAR szCmdLine = GetCommandLineA();
-	CHAR szPort[20];
-
-	while(*szCmdLine)
-	{
-		if(*szCmdLine == '-' || *szCmdLine == '/')
-		{
-			szCmdLine++;
-			switch(*szCmdLine)
-			{
-				case 'h':
-					szCmdLine++;
-					SetStringFromCommandLine(szCmdLine, settings.server.szAddr);
-					break;
-				case 'p':
-					szCmdLine++;
-					SetStringFromCommandLine(szCmdLine, szPort); settings.server.iPort = atoi(szPort);
-					break;
-				case 'n':
-					szCmdLine++;
-					SetStringFromCommandLine(szCmdLine, settings.server.szNickname);
-					break;
-				case 'z':
-					szCmdLine++;
-					SetStringFromCommandLine(szCmdLine, settings.server.szPassword);
-					break;
-			}
-		}
-		szCmdLine++;
-	}
+	ApplyServerArguments(GetCommandLineA(), settings.server);
 
 	return 1;
 }
