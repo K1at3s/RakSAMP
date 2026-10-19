@@ -1,3 +1,4 @@
+#include "../src/SettingsArguments.h"
 #include "../src/CommandTracking.h"
 #include "../src/GroupMembership.h"
 #include "../src/MuteNotice.h"
@@ -10,6 +11,27 @@
 #include <iostream>
 
 int main() {
+    struct TestServer { char szAddr[128], szNickname[32], szPassword[128]; int iPort; };
+    TestServer server = { "play.uifserver.net", "Tester", "", 7776 };
+    ApplyServerArguments("\"C:\\Bot Folder\\RakSAMPClient-postfix.exe\"", server);
+    assert(server.iPort == 7776);
+    ApplyServerArguments("RakSAMPClient-postfix.exe -p 7776 -n \"Test Name\"", server);
+    assert(server.iPort == 7776 && std::string(server.szNickname) == "Test Name");
+    ApplyServerArguments("bot.exe /p 8888 -z \"secret-p 0\"", server);
+    assert(server.iPort == 8888 && std::string(server.szPassword) == "secret-p 0");
+    const char *invalidPorts[] = { "0", "65536", "-1", "7776oops", "ostfix.exe", "99999999999999999999", "" };
+    for(size_t n = 0; n < sizeof(invalidPorts)/sizeof(invalidPorts[0]); ++n) {
+        int port = 7776;
+        assert(!ParseServerPort(invalidPorts[n], port) && port == 7776);
+    }
+    ApplyServerArguments("bot.exe -p 0 -n Other -p", server);
+    assert(server.iPort == 8888);
+    ApplyServerArguments("bot.exe -p -n Final", server);
+    assert(server.iPort == 8888 && std::string(server.szNickname) == "Final");
+    int validPort = 0;
+    assert(ParseServerPort("1", validPort) && validPort == 1);
+    assert(ParseServerPort("65535", validPort) && validPort == 65535);
+
     assert(FindMemberLeadership("Name\tRank\tRole\tLast Active\nwashe\tBoss\tLeader\tNow", "washe") == MEMBER_ALLOWED);
     assert(FindMemberLeadership("Name\tRank\tRole\tLast Active\nmt07\tUnderboss\tCo-Leader\tNow", "MT07") == MEMBER_ALLOWED);
     assert(FindMemberLeadership("Name\tRank\tRole\tLast Active\nmt07\tLeader\tMember\tNow", "mt07") == MEMBER_DENIED);
