@@ -1,19 +1,21 @@
 {
-  "name": "raksamp-vds-server",
-  "version": "1.0.0",
-  "description": "RakSAMP VDS Server and Discord Bot Integration",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js",
-    "dev": "bun --watch server.js",
-    "test": "bun db.selftest.js && bun commandTracking.selftest.js && bun unlink.selftest.js && bun warIsolation.selftest.js && bun localization.selftest.js && bun hwidMigration.selftest.js && bun warResultDelivery.selftest.js",
-    "test:node": "node db.selftest.js && node commandTracking.selftest.js && node unlink.selftest.js && node warIsolation.selftest.js && node localization.selftest.js && node hwidMigration.selftest.js && node warResultDelivery.selftest.js"
-  },
-  "dependencies": {
-    "discord.js": "^14.14.1",
-    "express": "^4.19.2",
-    "googleapis": "^178.0.0",
-    "mysql2": "^3.23.3",
-    "socket.io": "^4.7.5"
-  }
+    "name":  "raksamp-vds-server",
+    "version":  "1.0.0",
+    "description":  "RakSAMP VDS Server and Discord Bot Integration",
+    "main":  "server.js",
+    "scripts":  {
+                    "start":  "node server.js",
+                    "dev":  "bun --watch server.js",
+                    "test":  "bun db.selftest.js \u0026\u0026 bun commandTracking.selftest.js \u0026\u0026 bun unlink.selftest.js \u0026\u0026 bun warIsolation.selftest.js \u0026\u0026 bun localization.selftest.js \u0026\u0026 bun hwidMigration.selftest.js \u0026\u0026 bun warResultDelivery.selftest.js",
+                    "test:node":  "node db.selftest.js \u0026\u0026 node commandTracking.selftest.js \u0026\u0026 node unlink.selftest.js \u0026\u0026 node warIsolation.selftest.js \u0026\u0026 node localization.selftest.js \u0026\u0026 node hwidMigration.selftest.js \u0026\u0026 node warResultDelivery.selftest.js",
+                    "test:mysql":  "bun mysql.integration.js",
+                    "test:mysql:node":  "node mysql.integration.js"
+                },
+    "dependencies":  {
+                         "discord.js":  "^14.14.1",
+                         "express":  "^4.19.2",
+                         "googleapis":  "^178.0.0",
+                         "mysql2":  "^3.23.3",
+                         "socket.io":  "^4.7.5"
+                     }
 }

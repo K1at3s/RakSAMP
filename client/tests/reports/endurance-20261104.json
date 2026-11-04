@@ -1,0 +1,15 @@
+{
+  "accepted": 82687,
+  "baselinePrivateBytes": 3141632,
+  "completed": 82687,
+  "diskWriteFailures": 76,
+  "httpFailures": 13540,
+  "maxPumpMicroseconds": 681,
+  "maxQueue": 128,
+  "offlineFailures": 76,
+  "operationTicks": 76158,
+  "passed": true,
+  "peakPrivateBytes": 3964928,
+  "queueRejected": 374261,
+  "seconds": 1200
+}

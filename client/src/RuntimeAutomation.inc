@@ -4,9 +4,11 @@ static unsigned int s_automationGeneration = 0;
 static bool s_dispatchingOperation = false, s_scanSuspended = false;
 static DWORD s_scanWakeAt = 0, s_reconnectAt = 0, s_operationAt = 0;
 static std::string s_operationActor;
+#include "RuntimeBackendReads.inc"
 
 static std::string RuntimeBusyName(bool includeScan = true) {
     if(g_loginPending || !iAreWeConnected || !iGameInited) return "login/connection";
+    if(s_backendOperationPending) return "backend read";
     if(s_unlinkPermission.active) return "unlink permission";
     if(g_groleActive || g_grankActive || g_gkickActive || s_discordGroupCommand.active()) return "group action";
     if(g_groleListActive || g_grankListActive || g_gkickListActive) return "member selection";
@@ -25,6 +27,7 @@ static bool RuntimeWarMayMove() {
     return name.empty() || name == "zone sniper" || name == "war capture";
 }
 static void CancelManualAutomation() {
+    CancelBackendOperation();
     if(s_discordGroupCommand.active()) {
         const std::string type = s_discordGroupCommand.type;
         FinishDiscordGroupCommand(type.c_str(), "timeout", "interrupted");
@@ -151,6 +154,7 @@ bool QueueAutomationAction(const std::string &key, const std::function<void()> &
 void ProcessAutomationRuntime() {
     ProcessDurableResults();
     if(!iAreWeConnected || !iGameInited || g_loginPending || !iSpawned) return;
+    if(s_backendOperationPending && (s_backendOperation.group != g_myGroupName || !RuntimeActorValid(s_backendOperation) || ClientTick() - s_backendOperation.started > ClientOptions().queueTimeoutMs)) CancelBackendOperation();
     std::string busy = RuntimeBusyName(false);
     if(!s_operationActor.empty() && !busy.empty() && ClientTick() - s_operationAt > ClientOptions().operationTimeoutMs) {
         Log("[RUNTIME] Operation timed out: %s", busy.c_str()); CancelManualAutomation(); busy.clear();
@@ -165,7 +169,9 @@ void ProcessAutomationRuntime() {
     if(s_operations.Pop(ClientTick(), s_automationGeneration, ClientOptions().queueTimeoutMs, g_myGroupName,
         [](const QueuedOperation &op) { return op.sender == g_myPlayerID ? op.actor == g_szNickName :
             op.sender >= 0 && op.sender < MAX_PLAYERS && playerInfo[op.sender].iIsConnected && op.actor == playerInfo[op.sender].szPlayerName; }, item)) {
-        s_operationActor = item.actor; s_operationAt = ClientTick(); s_dispatchingOperation = true;
+        s_operationActor = item.actor; s_operationAt = ClientTick();
+        if(PrepareRuntimeBackendRead(item)) return;
+        s_dispatchingOperation = true;
         if(item.action) item.action(); else HandleGroupCommand(item.command.c_str(), item.sender);
         s_dispatchingOperation = false;
         return;
