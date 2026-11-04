@@ -44,4 +44,22 @@ async function sendToGuildChannel(guild, field, { embed, content, files } = {}) 
     }
 }
 
-module.exports = { setClient, sendToGuildChannel };
+
+async function sendWarResult(guild, embed, marker, allowSend) {
+    let channel;
+    try {
+        if (!guild?.zoneWarChannelId || !_client) throw new Error('War channel not configured');
+        channel = await _client.channels.fetch(guild.zoneWarChannelId);
+        if (!channel?.messages || !channel.send) throw new Error('War channel unavailable');
+        const history = await channel.messages.fetch({ limit: 100 });
+        if (history.some(message => message.author?.id === _client.user?.id && message.embeds.some(item => item.footer?.text === marker))) return channel.id;
+    } catch (error) { error.definitelyNotSent = true; throw error; }
+    if (!allowSend) return null;
+    embed.setFooter({ text: marker });
+    try { await channel.send({ embeds: [embed] }); return channel.id; }
+    catch (error) {
+        error.definitelyNotSent = error.status >= 400 && error.status < 500 && error.status !== 408;
+        throw error;
+    }
+}
+module.exports = { setClient, sendToGuildChannel, sendWarResult };
