@@ -68,3 +68,5 @@ Backend testleri: `bun run test` veya `npm run test:node`. `warResultDelivery.se
 | `operation_timeout_ms`, `queue_timeout_ms` | 1800000 / 120000 | Aktif manuel işlem ve kuyruk süresi |
 | `result_retry_ms` | 5000 | Savaş sonucu yeniden deneme aralığı |
 | `war_notice_1`, `war_notice_2`, `war_notice_3` | 10 / 3 / 1 | Son dakika duyuru eşikleri; azalan sırada olmalıdır |
+
+HTTP devam mekanizmasi, gercek MySQL testi, otomatik release ve uzun sureli test komutlari icin [IMPROVEMENTS.md](IMPROVEMENTS.md) belgesine bak.

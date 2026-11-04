@@ -9,6 +9,7 @@
 #include "BackendApi.h"
 #include "OperationQueue.h"
 static void ScheduleRuntimeScanSample();
+static unsigned int RuntimeReadEpoch();
 static bool RuntimeScanMayAdvance();
 static std::string RuntimeBusyName(bool includeScan);
 static bool RuntimeWarMayMove();
@@ -266,7 +267,20 @@ static void GmUrlEncode(const std::string &in, std::string &out)
 }
 
 void StartGmembersCollect(const char *requestId)
-{
+{    if(g_gmPhase != 0) return;
+    const std::string knownPath = "/api/gmembers/known?hwid=" + BackendQueryValue(g_myHWID) +
+        "&group=" + BackendQueryValue(GameChatToUtf8(g_myGroupName.c_str()));
+    if(!GetBackendSnapshot(knownPath)) {
+        const std::string request = requestId ? requestId : "";
+        const unsigned int epoch = RuntimeReadEpoch();
+        if(!ReadBackendOnce(knownPath, [request, epoch](const BackendResponse &response) {
+            if(epoch != RuntimeReadEpoch()) return;
+            if(!response || response->status != 200 || !QueueAutomationAction("roster:" + request, [request]() { StartGmembersCollect(request.c_str()); })) {
+                g_bridgeSuppressEcho++; sendChat((char*)"!Member roster query failed.");
+            }
+        })) { g_bridgeSuppressEcho++; sendChat((char*)"!Backend queue is full."); }
+        return;
+    }
 	g_gmRequestId = (requestId && requestId[0]) ? requestId : "";
 	if(g_gmPhase != 0)
 	{
@@ -280,7 +294,7 @@ void StartGmembersCollect(const char *requestId)
 	g_gmKnownAcc.clear(); g_gmPrefilled = false;
 	// Tabloda account ID'si olanlari cek: bunlara /astats GONDERILMEZ (faz 3'te atlanir)
 	try {
-		std::string grpEnc; GmUrlEncode(g_myGroupName, grpEnc);
+		std::string grpEnc = BackendQueryValue(GameChatToUtf8(g_myGroupName.c_str()));
 		std::string strUrl = std::string("/api/gmembers/known?hwid=") + g_myHWID + "&group=" + grpEnc;
 		auto res = GetBackendSnapshot(strUrl.c_str());
 		if(res && res->status == 200){
@@ -2890,6 +2904,7 @@ static void BindZoneGroup(int iZone, const char *szName)
 void ResetPlayerCache()
 {
 	memset(g_playerCache, 0, sizeof(g_playerCache));
+    for(int i = 0; i < MAX_PLAYERS; ++i) { g_playerCache[i].dLoss = -1.0; g_playerCache[i].iFps = g_playerCache[i].iPing = -1; }
 	Log("[PL-CACHE] bellek sifirlandi (kaynak: canli + DB).");
 }
 
@@ -3805,7 +3820,8 @@ void ServerQuit(RPCParameters *rpcParams)
 
 	playerInfo[playerId].iIsConnected = 0;
 	playerInfo[playerId].byteIsNPC = 0;
-	memset(&g_playerCache[playerId], 0, sizeof(g_playerCache[0])); // cikis yapan slotun cachei temizlenir (bayat isim kalmasin)
+	memset(&g_playerCache[playerId], 0, sizeof(g_playerCache[0]));
+    g_playerCache[playerId].dLoss = -1.0; g_playerCache[playerId].iFps = g_playerCache[playerId].iPing = -1; // cikis yapan slotun cachei temizlenir (bayat isim kalmasin)
 	//Log("***[QUIT:%d] (%d) %s", byteReason, playerId, playerInfo[playerId].szPlayerName);
 	memset(playerInfo[playerId].szPlayerName, 0, 20);	
 }
@@ -5294,12 +5310,16 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 					SetWelcomeMessage("");
 				}
 				else if(!_stricmp(pArg, "list"))
-				{
-					// Per-user listesini Discord'a goster (log + chat)
-					try{
-						std::string url = "/api/welcome/peruser/list?hwid=" + g_myHWID;
-						auto res = GetBackendSnapshot(url.c_str());
-						if(res && res->status==200){
+                {
+                    const std::string url = "/api/welcome/peruser/list?hwid=" + BackendQueryValue(g_myHWID);
+                    const int sender = iSenderId; const unsigned int epoch = RuntimeReadEpoch();
+                    const std::string actor = sender == g_myPlayerID ? g_szNickName :
+                        (sender >= 0 && sender < MAX_PLAYERS ? playerInfo[sender].szPlayerName : "");
+                    if(!ReadBackendOnce(url, [sender, actor, epoch](const BackendResponse &res) {
+                        if(epoch != RuntimeReadEpoch() || actor.empty() || (sender == g_myPlayerID ? actor != g_szNickName :
+                            sender < 0 || sender >= MAX_PLAYERS || !playerInfo[sender].iIsConnected || actor != playerInfo[sender].szPlayerName)) return;
+                        if(!res || res->status != 200) { g_bridgeSuppressEcho++; sendChat((char*)"!Backend query failed."); return; }
+                        try {if(res && res->status==200){
 							auto j=json::parse(res->body);
 							auto list=j.value("list", json::array());
 							if(list.empty()){
@@ -5314,8 +5334,9 @@ void HandleGroupCommand(const char *pGroupMsg, int iSenderId)
 								g_bridgeSuppressEcho++; sendChat((char*)out.c_str());
 							}
 						}
-					}catch(...){}
-				}
+					                        } catch(...) { g_bridgeSuppressEcho++; sendChat((char*)"!Invalid backend response."); }
+                    })) { g_bridgeSuppressEcho++; sendChat((char*)"!Backend queue is full."); }
+                }
 				else
 				{
 					// Per-user self: gonderen kisi kendi adina mesaj ayarlar
@@ -8235,8 +8256,9 @@ static bool QueryBackendPlayerRowByAccount(int iAcc, char *szName, size_t nNameL
 }
 static bool PlEnsureFromDb(int iPid)
 {
-	char szN[64]; double dL; int iF, iP;
-	if(!QueryBackendPlayerRow(iPid, szN, sizeof(szN), &dL, &iF, &iP, NULL)) return false;
+	char szN[64]; double dL; int iF, iP; int age = 999999;
+	if(!QueryBackendPlayerRow(iPid, szN, sizeof(szN), &dL, &iF, &iP, &age)) return false;
+    if(age < 0 || age >= 120 || (playerInfo[iPid].iIsConnected && _stricmp(playerInfo[iPid].szPlayerName, szN))) return false;
 	if(!szN[0] || iPid < 0 || iPid >= MAX_PLAYERS) return false;
 	strncpy_s(g_playerCache[iPid].szName, sizeof(g_playerCache[0].szName), szN, _TRUNCATE);
 	g_playerCache[iPid].dLoss = dL;
@@ -8246,6 +8268,35 @@ static bool PlEnsureFromDb(int iPid)
 	Log("[PL-CACHE] id=%d DB'den tamamlandi: %s.", iPid, szN);
 	return dL >= 0.0;
 }
+static void ReplyPacketLossFallback(int target)
+{
+
+		if(target >= 0 && target < MAX_PLAYERS && (g_playerCache[target].dLoss >= 0.0 || PlEnsureFromDb(target)))
+		{
+			const char *pName = LM("Oyuncu ?", "Player ?");
+			char szFallbackName[32];
+			if(playerInfo[target].szPlayerName[0]) pName = playerInfo[target].szPlayerName;
+			else if(g_playerCache[target].szName[0]) pName = g_playerCache[target].szName;
+			else { sprintf_s(szFallbackName, sizeof(szFallbackName), LM("Oyuncu %d", "Player %d"), target); pName = szFallbackName; }
+			char szFps[16], szPing[16];
+			if(g_playerCache[target].iFps >= 0) sprintf_s(szFps, sizeof(szFps), "%d", g_playerCache[target].iFps); else strcpy(szFps, "--");
+			if(g_playerCache[target].iPing >= 0) sprintf_s(szPing, sizeof(szPing), "%d", g_playerCache[target].iPing); else strcpy(szPing, "--");
+			char szOut[192];
+			sprintf_s(szOut, sizeof(szOut), PlayerStatsMessage(g_langTurkish),
+				pName, g_playerCache[target].dLoss, szFps, szPing);
+			Log("[PNETSTATS] Zaman asimi, cache/DB ile cevap: %s", szOut);
+			g_bridgeSuppressEcho++;
+			sendChat(szOut);
+		}
+		else
+		{
+			Log("[PNETSTATS] Stats-post ve cache yok, 'bulunamadi' cevabi.");
+			g_bridgeSuppressEcho++;
+			sendChat((char *)LM("!Paket kaybi bulunamadi.", "!Packetloss not found."));
+		}
+
+}
+
 void ProcessZoneWarAutoJoin()
 {
 	DWORD dwNow = ClientTick();
@@ -8306,33 +8357,20 @@ void ProcessZoneWarAutoJoin()
 
 	// ?pl: Stats-post gecikmeli cevabi beklerken zaman asimi. Once taze Stats-post
 	// dener (genelde ~1 sn icinde gelir); gelmezse cache'ten cevapla (fps yoksa "--").
-	if(g_waitingForPNetStats && dwNow - g_pnetstatsReqTime > 3500)
-	{
-		g_waitingForPNetStats = false;
-		if(g_plTargetId >= 0 && g_plTargetId < MAX_PLAYERS && (g_playerCache[g_plTargetId].dLoss >= 0.0 || PlEnsureFromDb(g_plTargetId)))
-		{
-			const char *pName = LM("Oyuncu ?", "Player ?");
-			char szFallbackName[32];
-			if(playerInfo[g_plTargetId].szPlayerName[0]) pName = playerInfo[g_plTargetId].szPlayerName;
-			else if(g_playerCache[g_plTargetId].szName[0]) pName = g_playerCache[g_plTargetId].szName;
-			else { sprintf_s(szFallbackName, sizeof(szFallbackName), LM("Oyuncu %d", "Player %d"), g_plTargetId); pName = szFallbackName; }
-			char szFps[16], szPing[16];
-			if(g_playerCache[g_plTargetId].iFps >= 0) sprintf_s(szFps, sizeof(szFps), "%d", g_playerCache[g_plTargetId].iFps); else strcpy(szFps, "--");
-			if(g_playerCache[g_plTargetId].iPing >= 0) sprintf_s(szPing, sizeof(szPing), "%d", g_playerCache[g_plTargetId].iPing); else strcpy(szPing, "--");
-			char szOut[192];
-			sprintf_s(szOut, sizeof(szOut), PlayerStatsMessage(g_langTurkish),
-				pName, g_playerCache[g_plTargetId].dLoss, szFps, szPing);
-			Log("[PNETSTATS] Zaman asimi, cache/DB ile cevap: %s", szOut);
-			g_bridgeSuppressEcho++;
-			sendChat(szOut);
-		}
-		else
-		{
-			Log("[PNETSTATS] Stats-post ve cache yok, 'bulunamadi' cevabi.");
-			g_bridgeSuppressEcho++;
-			sendChat((char *)LM("!Paket kaybi bulunamadi.", "!Packetloss not found."));
-		}
-	}
+	if(g_waitingForPNetStats && dwNow - g_pnetstatsReqTime > 3500)    {
+        g_waitingForPNetStats = false;
+        const int target = g_plTargetId;
+        if(target < 0 || target >= MAX_PLAYERS) return;
+        if(g_playerCache[target].dLoss >= 0.0 || PlEnsureFromDb(target)) ReplyPacketLossFallback(target);
+        else {
+            const std::string name = playerInfo[target].szPlayerName;
+            const unsigned int epoch = RuntimeReadEpoch();
+            if(!ReadBackendOnce("/api/player/cache?id=" + std::to_string(target), [target, name, epoch](const BackendResponse &) {
+                if(epoch != RuntimeReadEpoch() || name != playerInfo[target].szPlayerName) return;
+                ReplyPacketLossFallback(target);
+            })) ReplyPacketLossFallback(target);
+        }
+    }
 
 	// Kisa GZ giris donusu: takim rengi ogrenildi (ya da sure doldu), /fr ile freeroam'a don.
 	// Kill-list girisinde (g_zwKillListStay) GZ'de KALINIR - sava-s bitince won/loses
@@ -8611,7 +8649,7 @@ static int CollectGroupZones(const char *szGroupName, int *outZones, int maxZone
 	{
 		try
 		{
-			std::string url = std::string("/api/groups/zone?name=") + szGroupName;
+			std::string url = std::string("/api/groups/zone?name=") + BackendQueryValue(GameChatToUtf8(szGroupName));
 			for(size_t i = 0; i < url.size(); i++)
 				if(url[i] == ' ') url.replace(i, 1, "%20");
 			auto res = GetBackendSnapshot(url.c_str());
