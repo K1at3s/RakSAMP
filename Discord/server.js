@@ -15,7 +15,9 @@ const commandTracker = require('./utils/commandTracker');
 const { loadCommands, registerCommands, registerForGuild, handleInteraction } = require('./handlers/commandHandler');
 const db = require('./db');
 const { validateKillListContext, createResultDeduplicator } = require('./utils/killListContext');
-const killListResults = createResultDeduplicator();
+const { createWarResultDelivery } = require('./utils/warResultDelivery');
+const { sendWarResult } = require('./utils/discordNotifier');
+const warResultDelivery = createWarResultDelivery(db.execute);
 
 // Dil yardimcisi: botun oyun ici diline gore metin sec (tr -> Turkce, diger -> EN).
 const L = (guild, tr, en) => (guild && guild.lang === 'tr') ? tr : en;
@@ -720,11 +722,11 @@ const mvpDmg = Number(body.mvpDmg) || 0;
         .setTimestamp()
         .addFields(fields);
 
-    if (!killListResults.reserve(body.hwid, body.warId)) return res.json({ success: true, duplicate: true });
-    let channelId;
-    try { channelId = await sendToGuildChannel(guild, 'zoneWarChannelId', { embed }); }
-    catch (err) { killListResults.release(body.hwid, body.warId); throw err; }
-    if (!channelId) { killListResults.release(body.hwid, body.warId); return res.status(503).json({ success: false }); }
+    const marker = 'RakSAMP war: ' + crypto.createHash('sha256').update(JSON.stringify([body.hwid, body.warId])).digest('hex').slice(0, 32);
+    const delivered = await warResultDelivery.deliver(body.hwid, body.warId,
+        allowSend => sendWarResult(guild, embed, marker, allowSend));
+    if (!delivered.success) return res.status(503).json(delivered);
+    const channelId = delivered.channelId;
     console.log(`⚔️ KILLLIST (bot=${body.playerName}, hwid=${body.hwid}, zone=${body.zone || '?'}, war=${body.warId}, guild=${guild.guildId}, kanal=${channelId}, dil=${isTr ? 'tr' : 'en'}): ${won ? 'WIN' : 'LOSE'} ${redName} vs ${blueName} (${redKills}-${blueKills})`);
     return res.json({ success: true, channelId });
 });
@@ -1023,7 +1025,7 @@ app.post('/api/welcome/toggle', async (req, res) => {
         lic = await License.create({ hwid, isApproved: false });
     }
 
-    lic.welcomeEnabled = !lic.welcomeEnabled;
+    lic.welcomeEnabled = typeof body.enabled === 'boolean' ? body.enabled : !lic.welcomeEnabled;
     await lic.save();
 
     console.log(`👋 WELCOME TOGGLE (hwid=${hwid}): ${lic.welcomeEnabled ? 'AÇILDI' : 'KAPANDI'}`);

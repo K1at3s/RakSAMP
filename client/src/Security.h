@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <functional>
 
 // K??resel De?si?skenler
 extern std::string g_myHWID;
@@ -66,6 +67,8 @@ int HandleCapturedDialog(int wDialogID, const char *szTitle, const char *szInfo)
 void ToggleDiscordChat();
 void SendGroupChatToDiscord(const char *text, const char *author);
 void PollDiscordChat();
+void PumpBackendHttp();
+void InvalidateBackendResponses();
 // ?tr/?en: dili MongoDB'ye (Guild.lang) yazar; polling bu degeri geri okur.
 void ServerSetBotLang(bool turkish);
 // ?guildid: bu HWID'i Discord sunucusuna (guildId) baglar; basariliysa true.
@@ -184,4 +187,12 @@ int RunCommand(char *szCMD, int iFromConsole);
 // misc_funcs.cpp: cikis chat kuyrugu (5 sn arayla gonderim) - main loop her tick cagirir
 void ProcessChatOutQueue();
 
+void ResetAutomationSession();
+void ProcessAutomationRuntime();
+std::string DescribeAutomation();
+bool RuntimeGateGroupCommand(const char *command, int sender);
+void ResetChatOutQueue();
+bool RuntimeConnectionReady();
+bool ProcessLoginGate(unsigned long now);
+bool QueueAutomationAction(const std::string &key, const std::function<void()> &action);
 #endif

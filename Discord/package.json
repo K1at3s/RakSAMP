@@ -6,8 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "bun --watch server.js",
-    "test": "bun db.selftest.js && bun commandTracking.selftest.js && bun unlink.selftest.js && bun warIsolation.selftest.js && bun localization.selftest.js",
-    "test:node": "node db.selftest.js && node commandTracking.selftest.js && node unlink.selftest.js && node warIsolation.selftest.js && node localization.selftest.js"
+    "test": "bun db.selftest.js && bun commandTracking.selftest.js && bun unlink.selftest.js && bun warIsolation.selftest.js && bun localization.selftest.js && bun hwidMigration.selftest.js && bun warResultDelivery.selftest.js",
+    "test:node": "node db.selftest.js && node commandTracking.selftest.js && node unlink.selftest.js && node warIsolation.selftest.js && node localization.selftest.js && node hwidMigration.selftest.js && node warResultDelivery.selftest.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",

@@ -4,6 +4,7 @@
 
 #include "main.h"
 #include "SettingsArguments.h"
+#include "RuntimeOptions.h"
 
 struct stSettings settings;
 TiXmlDocument xmlSettings;
@@ -20,6 +21,26 @@ int LoadSettings()
 	TiXmlElement* rakSAMPElement = xmlSettings.FirstChildElement("RakSAMPClient");
 	if(rakSAMPElement)
 	{
+        if(TiXmlElement *automation = rakSAMPElement->FirstChildElement("automation")) {
+            RuntimeOptions &o = ClientOptions();
+            const char *base = automation->Attribute("backend_url");
+            if(base && !ValidBackendUrl(base)) { Log("[CONFIG] Invalid backend_url"); return 0; }
+            if(base) { o.backendUrl = base; while(o.backendUrl.size() > 8 && o.backendUrl.back() == '/') o.backendUrl.pop_back(); }
+            struct Option { const char *name; unsigned int *value; unsigned int low, high; } values[] = {
+                {"connect_timeout_ms", &o.connectTimeoutMs, 100, 30000}, {"read_timeout_ms", &o.readTimeoutMs, 100, 30000},
+                {"write_timeout_ms", &o.writeTimeoutMs, 100, 30000}, {"total_timeout_ms", &o.totalTimeoutMs, 100, 60000},
+                {"poll_interval_ms", &o.pollIntervalMs, 500, 60000}, {"db_sync_interval_ms", &o.dbSyncIntervalMs, 5000, 3600000},
+                {"scan_period_ms", &o.scanPeriodMs, 30000, 86400000}, {"scan_sample_ms", &o.scanSampleMs, 1000, 60000},
+                {"scan_teleport_ms", &o.scanTeleportMs, 1000, 60000}, {"scan_gap_ms", &o.scanGapMs, 500, 60000},
+                {"reconnect_ms", &o.reconnectMs, 1000, 60000}, {"operation_timeout_ms", &o.operationTimeoutMs, 10000, 3600000},
+                {"queue_timeout_ms", &o.queueTimeoutMs, 5000, 3600000}, {"result_retry_ms", &o.resultRetryMs, 1000, 300000},
+                {"war_notice_1", &o.warNotice1, 1, 59}, {"war_notice_2", &o.warNotice2, 1, 59}, {"war_notice_3", &o.warNotice3, 1, 59}
+            };
+            for(const Option &value : values) if(const char *raw = automation->Attribute(value.name)) {
+                if(!RuntimeInteger(raw, value.low, value.high, *value.value)) { Log("[CONFIG] Invalid %s", value.name); return 0; }
+            }
+            if(o.warNotice1 <= o.warNotice2 || o.warNotice2 <= o.warNotice3) { Log("[CONFIG] Countdown thresholds must decrease"); return 0; }
+        }
 		// get console
 		rakSAMPElement->QueryIntAttribute("console", (int *)&settings.iConsole);
 
