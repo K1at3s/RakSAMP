@@ -1,4 +1,6 @@
 const assert = require('node:assert/strict');
+process.env.DISCORD_BOT_TOKEN ||= 'selftest-placeholder';
+process.env.RAKSAMP_AES_SECRET ||= 'selftest-only-secret-material-at-least-32-characters';
 const { validateKillListContext, createResultDeduplicator } = require('./utils/killListContext');
 const db = require('./db');
 const { Guild } = require('./models');

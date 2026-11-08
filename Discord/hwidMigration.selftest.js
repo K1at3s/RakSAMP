@@ -1,3 +1,5 @@
+process.env.DISCORD_BOT_TOKEN ||= 'selftest-placeholder';
+process.env.RAKSAMP_AES_SECRET ||= 'selftest-only-secret-material-at-least-32-characters';
 const assert = require('node:assert/strict');
 const { migrateHwid } = require('./migrateHwid');
 const oldHwid = 'BURHAN-1234-5678-90AB-CDEF-BOT';
