@@ -46,7 +46,7 @@ async function hasGrolePermission(interaction){
 const app = express();
 app.use(express.json());
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+const io = new Server(server, { cors: { origin: config.CORS_ORIGINS } });
 
 // --- MYSQL (db.js shim) ---
 require('./db').init().then(() => console.log(`✔ Veri katmanı hazır (DB=${config.DB})`)).catch(err => console.error(err));
@@ -634,7 +634,7 @@ app.post('/api/gmembers/sheet', async (req, res) => {
         return res.json({ success: true, rows: result.rows, spreadsheetId: result.spreadsheetId, skipped: false });
     } catch (err) {
         console.error(`📊 GMEMBERS hatası (grup=${group}): ${err.message}`);
-        return res.json({ success: false, message: err.message });
+        return res.json({ success: false, message: 'Database operation failed', errorCode: 'DATABASE_OPERATION_FAILED' });
     }
 });
 
@@ -1522,7 +1522,7 @@ app.post('/api/unlink', async (req, res) => {
         return res.json({ success: true, ...result });
     } catch (err) {
         console.error('UNLINK:', err.message);
-        return res.status(500).json({ success: false });
+        return res.status(500).json({ success: false, errorCode: 'UNLINK_FAILED' });
     }
 });
 
@@ -1570,7 +1570,7 @@ app.post('/api/player/cache', async (req, res) => {
         return res.json({ success: true, count: rows.length });
     } catch (err) {
         console.error('PLAYER-CACHE hatasi:', err.message);
-        return res.status(500).json({ success: false, message: err.message });
+        return res.status(500).json({ success: false, message: 'Database operation failed', errorCode: 'DATABASE_OPERATION_FAILED' });
     }
 });
 
@@ -1594,7 +1594,7 @@ app.get('/api/player/cache', async (req, res) => {
         return res.json({ success: true, rows });
     } catch (err) {
         console.error('PLAYER-CACHE-GET hatasi:', err.message);
-        return res.status(500).json({ success: false, message: err.message });
+        return res.status(500).json({ success: false, message: 'Database operation failed', errorCode: 'DATABASE_OPERATION_FAILED' });
     }
 });
 
@@ -1657,7 +1657,7 @@ app.post('/api/groups', async (req, res) => {
         return res.json({ success: true, count: rows.length });
     } catch (err) {
         console.error('GROUPS hatasi:', err.message);
-        return res.status(500).json({ success: false, message: err.message });
+        return res.status(500).json({ success: false, message: 'Database operation failed', errorCode: 'DATABASE_OPERATION_FAILED' });
     }
 });
 
@@ -1674,7 +1674,7 @@ app.get('/api/groups/zone', async (req, res) => {
         }
         return res.json({ success: true, zones: Array.isArray(zones) ? zones : [] });
     } catch (err) {
-        return res.status(500).json({ success: false, zones: [], message: err.message });
+        return res.status(500).json({ success: false, zones: [], message: 'Database operation failed', errorCode: 'DATABASE_OPERATION_FAILED' });
     }
 });
 
@@ -1705,7 +1705,7 @@ app.get('/api/groups', async (req, res) => {
         return res.json({ success: true, groups: out });
     } catch (err) {
         console.error('GROUPS-GET hatasi:', err.message);
-        return res.status(500).json({ success: false, message: err.message });
+        return res.status(500).json({ success: false, message: 'Database operation failed', errorCode: 'DATABASE_OPERATION_FAILED' });
     }
 });
 
@@ -1738,7 +1738,7 @@ app.post('/api/bot/status', async (req, res) => {
         return res.json({ success: true });
     } catch (err) {
         console.error('BOT-STATUS hatasi:', err.message);
-        return res.status(500).json({ success: false, message: err.message });
+        return res.status(500).json({ success: false, message: 'Database operation failed', errorCode: 'DATABASE_OPERATION_FAILED' });
     }
 });
 
@@ -1753,7 +1753,7 @@ app.get('/api/bot/status', async (req, res) => {
         return res.json({ success: true, groupName: r.group_name || '' });
     } catch (err) {
         console.error('BOT-STATUS GET hatasi:', err.message);
-        return res.status(500).json({ success: false, groupName: '', message: err.message });
+        return res.status(500).json({ success: false, groupName: '', message: 'Database operation failed', errorCode: 'DATABASE_OPERATION_FAILED' });
     }
 });
 
@@ -1771,7 +1771,7 @@ app.get('/api/bot/toggles', async (req, res) => {
         return res.json({ success: true, zscan, gzt, zgrp });
     } catch (err) {
         console.error('BOT-TOGGLES hatasi:', err.message);
-        return res.status(500).json({ success: false, zscan: 0, gzt: 1, zgrp: 1, message: err.message });
+        return res.status(500).json({ success: false, zscan: 0, gzt: 1, zgrp: 1, message: 'Database operation failed', errorCode: 'DATABASE_OPERATION_FAILED' });
     }
 });
 

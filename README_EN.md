@@ -25,7 +25,7 @@ RakSAMP is an automated group bot for the **UIF (United Islands Freeroam)** serv
 ## 🚀 Setup
 
 1. **MySQL** — create the `raksamp` database (`Discord/schema.sql`); tables are created automatically.
-2. **Backend** — start with `bun .` in `Discord/` (Discord bot token + MySQL settings in `config.js`).
+2. **Backend** — copy `Discord/.env.example` to `.env`, set the secret values, then start with `bun .` in `Discord/`. The bot token and `RAKSAMP_AES_SECRET` are required; the AES secret must be at least 32 characters.
 3. **Client** — run `client/bin/RakSAMPClient.exe`:
    - `RakSAMPClient.xml` — server address, bot name (`hakixld`), `normal_pos` spawn position.
    - On first launch, log in by typing `/login <password>` in the console (the server session is remembered afterwards).
@@ -33,6 +33,8 @@ RakSAMP is an automated group bot for the **UIF (United Islands Freeroam)** serv
 4. **Discord** — create the log channels with `/setup` (TR: `/kurulum`). Channels are NOT auto-created; only this command creates them. `/setup off` (TR: `/setup kapat`) deletes them.
 
 Update and rollback instructions are included with every release. The bundled `Update-RakSAMPClient.ps1` verifies the checksum and backs up the current EXE before installing (GitHub CLI sign-in required). Example: `./client/Update-RakSAMPClient.ps1 -Project UIF -InstallRoot 'C:\path\to\RakSAMP'`. Use the [diagnostic report tool](client/tests/Create-DiagnosticReport.ps1) to create a privacy-filtered report locally; it is never sent anywhere, and you should review it before sharing.
+
+For MySQL backup and restore commands, see [`Discord/BACKUP-RESTORE.md`](Discord/BACKUP-RESTORE.md).
 
 ---
 

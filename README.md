@@ -25,7 +25,7 @@ RakSAMP, **UIF (United Islands Freeroam)** sunucusu için geliştirilmiş otomat
 ## 🚀 Kurulum
 
 1. **MySQL** — `raksamp` veritabanı oluştur (`Discord/schema.sql`), tablolar otomatik kurulur.
-2. **Backend** — `Discord/` klasöründe `bun .` ile başlat (Discord bot token + MySQL ayarları `config.js`).
+2. **Backend** — `Discord/.env.example` dosyasını `.env` olarak kopyala, gizli değerleri ayarla ve `Discord/` klasöründe `bun .` ile başlat. Bot tokenı ve `RAKSAMP_AES_SECRET` zorunludur; AES anahtarı en az 32 karakter olmalıdır.
 3. **Client** — `client/bin/RakSAMPClient.exe` çalıştır:
    - `RakSAMPClient.xml` — sunucu adresi, bot ismi (`hakixld`), `normal_pos` spawn pozisyonu.
    - İlk açılışta konsola `/login <şifre>` yazarak hesaba gir (sunucu oturumu sonra hatırlar).
@@ -33,6 +33,8 @@ RakSAMP, **UIF (United Islands Freeroam)** sunucusu için geliştirilmiş otomat
 4. **Discord** — `/setup` (TR: `/kurulum`) komutuyla log kanallarını kur. Kanallar otomatik oluşturulmaz; yalnızca bu komutla kurulur. `/setup kapat` (EN: `/setup off`) ile silinir.
 
 İstemci güncelleme ve geri alma yönergesi her release'te bulunur. Release içindeki `Update-RakSAMPClient.ps1`, checksum'ı doğrular ve EXE'yi yedekleyerek günceller (GitHub CLI ile giriş gerekir). Örnek: `./client/Update-RakSAMPClient.ps1 -Project UIF -InstallRoot 'C:\path\to\RakSAMP'`. Gizlilik filtreli hata raporunu elle oluşturmak için [tanılama aracını](client/tests/Create-DiagnosticReport.ps1) kullanın; rapor hiçbir yere gönderilmez, paylaşmadan önce içeriğini inceleyin.
+
+MySQL yedekleme ve geri yükleme komutları için [`Discord/BACKUP-RESTORE.md`](Discord/BACKUP-RESTORE.md) yönergesine bakın.
 
 ---
 

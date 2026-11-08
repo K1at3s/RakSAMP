@@ -29,7 +29,12 @@ try {
     $env:TEST_MYSQL_URL = "mysql://root@127.0.0.1:$port"
     foreach ($backend in (@($root) + $AdditionalBackendRoots)) {
         Push-Location $backend
-        try { & $Runtime mysql.integration.js; if ($LASTEXITCODE -ne 0) { throw "MySQL integration failed: $backend" } }
+        try {
+            & $Runtime mysql.integration.js
+            if ($LASTEXITCODE -ne 0) { throw "MySQL integration failed: $backend" }
+            & (Join-Path $backend 'tests/backup-restore.integration.ps1') -Port $port -MySqlBin (Join-Path $MySqlBase 'bin')
+            if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "Backup/restore integration failed: $backend" }
+        }
         finally { Pop-Location }
     }
 } finally {

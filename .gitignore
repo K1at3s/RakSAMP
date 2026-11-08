@@ -21,8 +21,12 @@ Release/
 
 # Backend
 Discord/node_modules/
+Discord/.env
+Discord/.env.*
+!Discord/.env.example
 Discord/*.db
 Discord/data/
+Discord/backups/
 
 # Temp / misc
 UpgradeLog.htm
