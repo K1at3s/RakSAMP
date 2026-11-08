@@ -15,6 +15,11 @@ const REASONS = {
 
 function createTracker({ schedule = setTimeout, cancel = clearTimeout, now = Date.now } = {}) {
     const entries = new Map();
+    const audit = [];
+    function record(entry) {
+        audit.push({ requestId: entry.id, command: entry.command.type, status: entry.status, at: now(), reason: entry.reason || '' });
+        if (audit.length > 500) audit.splice(0, audit.length - 500);
+    }
     function payload(entry) {
         const tr = entry.lang === 'tr';
         const labels = {
@@ -46,6 +51,7 @@ function createTracker({ schedule = setTimeout, cancel = clearTimeout, now = Dat
         if (entry.status === 'queued' && status === 'succeeded') return false;
         entry.status = status;
         entry.reason = reason;
+        record(entry);
         if (TERMINAL.has(status)) {
             cancel(entry.timer);
             entries.delete(id);
@@ -57,15 +63,16 @@ function createTracker({ schedule = setTimeout, cancel = clearTimeout, now = Dat
         if (component) await interaction.deferUpdate();
         else await interaction.deferReply({ ephemeral: true });
         const id = interaction.id;
-        const entry = { interaction, hwid, lang: guild?.lang || 'en', command, status: 'queued', reason: '', edits: Promise.resolve() };
+        const entry = { id, interaction, hwid, lang: guild?.lang || 'en', command, status: 'queued', reason: '', edits: Promise.resolve() };
         await interaction.editReply(payload(entry));
         entries.set(id, entry);
+        record(entry);
         entry.timer = schedule(() => update(id, hwid, 'timeout', entry.status === 'queued' ? '' : 'game_timeout'), 120000);
         entry.timer?.unref?.();
         queueCommand(hwid, { ...command, requesterId: id, expiresAt: now() + 120000, tracked: true });
         return id;
     }
-    return { submit, update, entries };
+    return { submit, update, entries, getAudit: () => audit.map(item => ({ ...item })) };
 }
 
 const tracker = createTracker();

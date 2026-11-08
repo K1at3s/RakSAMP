@@ -6,6 +6,8 @@ const commandEvents = new (require('node:events').EventEmitter)();
 function queueCommand(hwid, payload) {
     if (!hwid) return;
     const list = commandOutbox.get(hwid) || [];
+    // Poll retries must never enqueue the same Discord interaction twice.
+    if (payload?.requesterId && list.some(command => command.requesterId === payload.requesterId)) return;
     if (list.length >= 50) commandEvents.emit('dropped', hwid, list.shift());
     list.push(payload);
     commandOutbox.set(hwid, list);
