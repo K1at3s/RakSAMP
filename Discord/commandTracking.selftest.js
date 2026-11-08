@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict');
 const trackerModule = require('./utils/commandTracker');
+process.env.DISCORD_BOT_TOKEN ||= 'selftest-placeholder';
+process.env.RAKSAMP_AES_SECRET ||= 'selftest-only-secret-material-at-least-32-characters';
 const { createTracker } = trackerModule;
 const { commandOutbox, drainCommands, queueCommand } = require('./utils/commandOutbox');
 
